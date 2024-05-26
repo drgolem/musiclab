@@ -125,50 +125,31 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 
 	var outputData []byte
 
-	if convertToMono {
-
+	if convertToMono && audioFormat.NumChannels == 2 {
 		var bufMono bytes.Buffer
 		bufMonoWriter := bufio.NewWriter(&bufMono)
 
 		stereoData := buf.Bytes()
-		//bufMonoWriter.Write(stereoData)
 
 		idx := 0
 		for idx < len(stereoData) {
-			monoSample := [2]int16{}
+			chSample := [2]int16{}
 			for ch := 0; ch < 2; ch++ {
 				b0 := int16(stereoData[idx])
 				idx++
 				b1 := int16(stereoData[idx])
 				idx++
 
-				monoSample[ch] = int16((b1 << 8) | b0)
-
-				//bufMonoWriter.WriteByte(byte((monoSample >> 8) & 0xFF))
-				//bufMonoWriter.WriteByte(byte(monoSample & 0xFF))
-
-				//bufMonoWriter.WriteByte(byte(b0 & 0xFF))
-				//bufMonoWriter.WriteByte(byte(b1 & 0xFF))
+				chSample[ch] = int16((b1 << 8) | b0)
 			}
-			//monoSample /= 2
 
-			//bufMonoWriter.WriteByte(byte(monoSample[0] & 0xFF))
-			//bufMonoWriter.WriteByte(byte((monoSample[0] >> 8) & 0xFF))
+			t := chSample[0]/2 + chSample[1]/2
 
-			//t1 := 0.5*(float64(monoSample[0])/0x7fff) +
-			//	0.5*(float64(monoSample[1])/0x7fff)
-			//t1 := 0.5 * (float64(monoSample[1]) / 0x7fff)
-			t := monoSample[0]/2 + monoSample[1]/2
-			//t >>= 1
-
-			//bufMonoWriter.WriteByte(byte((monoSample[1] >> 8) & 0xFF))
-			//bufMonoWriter.WriteByte(byte(monoSample[1] & 0xFF))
 			bufMonoWriter.WriteByte(byte(t & 0xFF))
 			bufMonoWriter.WriteByte(byte((t >> 8) & 0xFF))
 		}
 
 		outputData = bufMono.Bytes()
-		//outSamplesCnt /= 2
 		outNumChannels = 1
 	} else {
 		outputData = buf.Bytes()
