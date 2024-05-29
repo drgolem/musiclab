@@ -58,7 +58,7 @@ func (wd *wavDecoder) DecodeSamples(samples int, audio []byte) (int, error) {
 		nSamples := len(smData)
 
 		for idx := 0; idx < nSamples; {
-			for j := 0; j < 2; j++ {
+			for j := 0; j < wd.channels; j++ {
 				sv := smData[idx].Values[j]
 
 				b16[0] = byte(sv & 0xFF)

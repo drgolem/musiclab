@@ -155,7 +155,7 @@ func (d *oggVorbisDecoder) DecodeSamples(samples int, audio []byte) (int, error)
 		nSamples := len(out)
 
 		for idx := 0; idx < nSamples; {
-			for j := 0; j < 2; j++ {
+			for j := 0; j < d.channels; j++ {
 				sv := int16(math.Floor(float64(out[idx+j]) * float64(32767)))
 
 				b16[0] = byte(sv & 0xFF)
