@@ -47,6 +47,10 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 		fmt.Printf("ERR: %v\n", err)
 		return
 	}
+	if _, err := os.Stat(inFileName); os.IsNotExist(err) {
+		fmt.Printf("path [%s] does not exist\n", inFileName)
+		return
+	}
 
 	newSampleRate, err := cmd.Flags().GetInt("new-samplerate")
 	if err != nil {
@@ -148,6 +152,8 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 			bufMonoWriter.WriteByte(byte(t & 0xFF))
 			bufMonoWriter.WriteByte(byte((t >> 8) & 0xFF))
 		}
+
+		bufMonoWriter.Flush()
 
 		outputData = bufMono.Bytes()
 		outNumChannels = 1

@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -36,6 +37,7 @@ func init() {
 	rootCmd.AddCommand(doremiCmd)
 
 	doremiCmd.Flags().Bool("generate", true, "generate wav")
+	doremiCmd.Flags().String("out", "doremi.wav", "output wav file")
 }
 
 func doDoremiCmd(cmd *cobra.Command, args []string) {
@@ -44,9 +46,9 @@ func doDoremiCmd(cmd *cobra.Command, args []string) {
 
 	Ampl := 0.4
 	// note A
-	freqA := float32(440.0)
+	//freqA := float32(440.0)
 	// note C#
-	freqCsharp := float32(277.18)
+	//freqCsharp := float32(277.18)
 	// note E
 	freqE := float32(329.63)
 
@@ -56,37 +58,105 @@ func doDoremiCmd(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	outFileName, err := cmd.Flags().GetString("out")
+	if err != nil {
+		fmt.Printf("ERR: %v\n", err)
+		return
+	}
+
 	if genAudio {
 		// generate tone with a given duration
-		//dur := 1 * time.Second
+		//dur := 3 * time.Second
 		dur := 800 * time.Millisecond
+		//dur := 8 * time.Millisecond
 
 		Ampl = 0.7
+
 		amplFn := func(dur time.Duration) func(currentframe int) float64 {
+			duration := dur.Seconds()
+			attack := 0.1 * duration
+			decay := 0.3 * duration
+			release := 0.3 * duration
+			sustain := 0.8 * Ampl
 			return func(currentframe int) float64 {
-				//return Ampl
-				attack := 0.1 * dur.Seconds()
-				decay := 0.3 * dur.Seconds()
-				release := 0.3 * dur.Seconds()
-				sustain := 0.8 * Ampl
-				return ADSR(Ampl, dur.Seconds(),
+				return ADSR(Ampl, duration,
 					attack, decay, sustain, release,
 					float64(sampleRate),
 					currentframe)
 			}
 		}
 
-		nSamples, audio := generateTone(dur, sampleRate, freqA, amplFn(dur))
+		/*
+			// constant amplitude
+			amplFn := func(dur time.Duration) func(currentframe int) float64 {
+				return func(currentframe int) float64 {
+					return Ampl
+				}
+			}
+		*/
 
-		n1, a1 := generateTone(dur, sampleRate, freqCsharp, amplFn(dur))
-		nSamples += n1
-		audio = append(audio, a1...)
+		/*
+			// exponential decay
+			amplFn := func(dur time.Duration) func(currentframe int) float64 {
+				start := Ampl
+				end := 1e-4
 
-		n1, a1 = generateTone(dur, sampleRate, freqE, amplFn(dur))
-		nSamples += n1
-		audio = append(audio, a1...)
+				nSamples := float64(sampleRate) * dur.Seconds()
+				decInc := math.Pow(end/start, 1/nSamples)
 
-		outFileName := "test.wav"
+				return func(currentframe int) float64 {
+					start *= decInc
+					return start
+				}
+			}
+		*/
+
+		/*
+			nSamples, audio := generateTone(dur, sampleRate, freqA, amplFn(dur))
+
+			n1, a1 := generateTone(dur, sampleRate, freqCsharp, amplFn(dur))
+			nSamples += n1
+			audio = append(audio, a1...)
+
+			n1, a1 = generateTone(dur, sampleRate, freqE, amplFn(dur))
+			nSamples += n1
+			audio = append(audio, a1...)
+		*/
+
+		/*
+			doremi := []string{
+				"C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5",
+				"B4", "A4", "G4", "F4", "E4", "D4", "C4",
+				"C4", "C5", "C6", "C7", "C8",
+				"D4", "D5", "D6", "D7", "D8",
+				"E4", "E5", "E6", "E7", "E8",
+				"F4", "F5", "F6", "F7", "F8",
+				"G4", "G5", "G6", "G7", "G8",
+				"A4", "A5", "A6", "A7", "A8",
+			}
+		*/
+		doremi := []string{
+			"C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5",
+			"B4", "A4", "G4", "F4", "E4", "D4", "C4",
+			"C5", "D5", "E5", "F5", "G5", "A5", "B5",
+			"C6", "D6", "E6", "F6", "G6", "A6", "B6",
+			"C7", "D7", "E7", "F7", "G7", "A7", "B7",
+			"C8", "D8", "E8", "F8", "G8", "A8", "B8",
+		}
+
+		//doremi = []string{"G4", "E4", "C4", "F4"}
+
+		nSamples := 0
+		audio := make([]byte, 0)
+
+		for _, note := range doremi {
+			freq := noteToFrequency(note)
+
+			n1, a1 := generateTone(dur, sampleRate, float32(freq), amplFn(dur))
+			nSamples += n1
+			audio = append(audio, a1...)
+		}
+
 		fOut, err := os.OpenFile(outFileName, os.O_WRONLY|os.O_CREATE, 0600)
 		if err != nil {
 			panic(err)
@@ -103,6 +173,47 @@ func doDoremiCmd(cmd *cobra.Command, args []string) {
 			uint16(bitsPerSample))
 
 		wavWriter.Write(audio)
+
+		// BPM - 48
+		// 48 beats per minute
+		// 2/4 - 2 beats per measure, quarter note 1 beat
+		// 48 beats - 60 sec
+		//  1 beat  - 60 / 48 = 1250 msec
+
+		score := []struct {
+			note string
+			dur  time.Duration
+		}{
+			{"G4", 1250 / 2 * time.Millisecond},
+			{"G4", 1250 * time.Millisecond},
+			{"G4", 1250 * time.Millisecond},
+			{"Eb4", 1250 * 2 * time.Millisecond},
+		}
+
+		audio = make([]byte, 0)
+
+		for _, sc := range score {
+			freq := noteToFrequency(sc.note)
+
+			n1, a1 := generateTone(sc.dur, sampleRate, float32(freq), amplFn(sc.dur))
+			nSamples += n1
+			audio = append(audio, a1...)
+		}
+
+		outFileName = "b5test.wav"
+		fOut2, err := os.OpenFile(outFileName, os.O_WRONLY|os.O_CREATE, 0600)
+		if err != nil {
+			panic(err)
+		}
+		defer fOut2.Close()
+
+		wavWriter2 := wav.NewWriter(fOut2,
+			uint32(nSamples),
+			uint16(outNumChannels),
+			uint32(sampleRate),
+			uint16(bitsPerSample))
+
+		wavWriter2.Write(audio)
 
 		return
 	}
@@ -164,7 +275,7 @@ func doDoremiCmd(cmd *cobra.Command, args []string) {
 		fmt.Printf("ERR: %v\n", err)
 		return
 	} else {
-		fmt.Printf("Format supported: %v, sampleRate: %f\n", outStreamParams, sampleRate)
+		fmt.Printf("Format supported: %v, sampleRate: %d\n", outStreamParams, sampleRate)
 	}
 
 	st, err := portaudio.NewStream(outStreamParams, float32(sampleRate))
@@ -311,4 +422,61 @@ func noteSamplesGen(framesPerBuffer int,
 		}
 		return dataBuffer
 	}
+}
+
+func noteToFrequency(note string) float64 {
+
+	// reference frequency: note A
+	ref_freq := 440.0
+	// reference octave: 4
+	ref_octave := 4
+
+	// parse note - last char is octave number
+	// 7 full octaves on piano
+
+	noteLen := len(note)
+
+	if noteLen == 0 || noteLen > 3 {
+		return ref_freq
+	}
+
+	octave := ref_octave
+
+	if noteLen > 1 {
+		// last char is octave number
+		var err error
+		octave, err = strconv.Atoi(note[noteLen-1:])
+		if err != nil {
+			return ref_freq
+		}
+	}
+
+	notes := []string{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
+
+	notePart := note[0:1]
+
+	idx := 0
+	for _, nt := range notes {
+		if notePart == nt {
+			break
+		}
+		idx++
+	}
+
+	if noteLen > 1 {
+		noteStep := note[1:2]
+		if noteStep == "#" {
+			idx++
+		} else if noteStep == "b" {
+			idx--
+		}
+	}
+
+	ref_note_idx := 9
+
+	octaveDiff := octave - ref_octave
+
+	freq := ref_freq * math.Pow(2, float64(octaveDiff)+float64(idx-ref_note_idx)/12)
+
+	return freq
 }

@@ -6,6 +6,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -39,6 +40,10 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 	fileName, err := cmd.Flags().GetString("file")
 	if err != nil {
 		fmt.Printf("ERR: %v\n", err)
+		return
+	}
+	if _, err := os.Stat(fileName); os.IsNotExist(err) {
+		fmt.Printf("path [%s] does not exist\n", fileName)
 		return
 	}
 
