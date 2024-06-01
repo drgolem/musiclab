@@ -1,6 +1,7 @@
 package decoders
 
 import (
+	"io"
 	"os"
 
 	"github.com/drgolem/ringbuffer"
@@ -37,11 +38,17 @@ func (wd *wavDecoder) DecodeSamples(samples int, audio []byte) (int, error) {
 
 	outputBytesPerSample := 2
 	var b16 [2]byte
+	var err error
 	for {
 		sampleBytes := wd.ringBuffer.Size()
 		samplesAvail := sampleBytes / (wd.channels * outputBytesPerSample)
-		if samplesAvail >= samples {
+		if err == io.EOF || samplesAvail >= samples {
 			bytesRequest := samples * wd.channels * outputBytesPerSample
+
+			if err == io.EOF {
+				bytesRequest = wd.ringBuffer.Size()
+			}
+
 			bytesRead, err := wd.ringBuffer.Read(bytesRequest, audio)
 			if err != nil {
 				return 0, err
@@ -50,7 +57,11 @@ func (wd *wavDecoder) DecodeSamples(samples int, audio []byte) (int, error) {
 			return samplesRead, nil
 		}
 
-		smData, err := wd.reader.ReadSamples(uint32(samples))
+		var smData []wav.Sample
+		smData, err = wd.reader.ReadSamples(uint32(samples))
+		if err == io.EOF {
+			continue
+		}
 		if err != nil {
 			return 0, err
 		}
