@@ -49,7 +49,7 @@ func Test_ChromaClose(t *testing.T) {
 	}
 
 	for _, td := range testData {
-		assert.Equal(t, td.ExpNote, freqToNote(td.Freq, 4),
+		assert.Equal(t, td.ExpNote, freqToNote(td.Freq),
 			fmt.Sprintf("expect %0.2f => %s", td.Freq, td.ExpNote))
 	}
 }

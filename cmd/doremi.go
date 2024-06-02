@@ -4,18 +4,12 @@ Copyright © 2024 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"bytes"
-	"context"
-	"encoding/binary"
 	"fmt"
 	"math"
 	"os"
-	"os/signal"
 	"strconv"
-	"syscall"
 	"time"
 
-	"github.com/drgolem/go-portaudio/portaudio"
 	"github.com/spf13/cobra"
 	"github.com/youpy/go-wav"
 )
@@ -36,7 +30,6 @@ to quickly create a Cobra application.`,
 func init() {
 	rootCmd.AddCommand(doremiCmd)
 
-	doremiCmd.Flags().Bool("generate", true, "generate wav")
 	doremiCmd.Flags().String("out", "doremi.wav", "output wav file")
 }
 
@@ -50,13 +43,7 @@ func doDoremiCmd(cmd *cobra.Command, args []string) {
 	// note C#
 	//freqCsharp := float32(277.18)
 	// note E
-	freqE := float32(329.63)
-
-	genAudio, err := cmd.Flags().GetBool("generate")
-	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
-		return
-	}
+	//freqE := float32(329.63)
 
 	outFileName, err := cmd.Flags().GetString("out")
 	if err != nil {
@@ -64,293 +51,164 @@ func doDoremiCmd(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	if genAudio {
-		// generate tone with a given duration
-		//dur := 3 * time.Second
-		dur := 800 * time.Millisecond
-		//dur := 8 * time.Millisecond
+	// generate tone with a given duration
+	//dur := 3 * time.Second
+	dur := 800 * time.Millisecond
+	//dur := 8 * time.Millisecond
 
-		Ampl = 0.7
+	Ampl = 0.7
 
+	amplFn := func(dur time.Duration) func(currentframe int) float64 {
+		duration := dur.Seconds()
+		attack := 0.1 * duration
+		decay := 0.3 * duration
+		release := 0.3 * duration
+		sustain := 0.8 * Ampl
+		return func(currentframe int) float64 {
+			return ADSR(Ampl, duration,
+				attack, decay, sustain, release,
+				float64(sampleRate),
+				currentframe)
+		}
+	}
+
+	/*
+		// constant amplitude
 		amplFn := func(dur time.Duration) func(currentframe int) float64 {
-			duration := dur.Seconds()
-			attack := 0.1 * duration
-			decay := 0.3 * duration
-			release := 0.3 * duration
-			sustain := 0.8 * Ampl
 			return func(currentframe int) float64 {
-				return ADSR(Ampl, duration,
-					attack, decay, sustain, release,
-					float64(sampleRate),
-					currentframe)
+				return Ampl
 			}
 		}
+	*/
 
-		/*
-			// constant amplitude
-			amplFn := func(dur time.Duration) func(currentframe int) float64 {
-				return func(currentframe int) float64 {
-					return Ampl
-				}
+	/*
+		// exponential decay
+		amplFn := func(dur time.Duration) func(currentframe int) float64 {
+			start := Ampl
+			end := 1e-4
+
+			nSamples := float64(sampleRate) * dur.Seconds()
+			decInc := math.Pow(end/start, 1/nSamples)
+
+			return func(currentframe int) float64 {
+				start *= decInc
+				return start
 			}
-		*/
+		}
+	*/
 
-		/*
-			// exponential decay
-			amplFn := func(dur time.Duration) func(currentframe int) float64 {
-				start := Ampl
-				end := 1e-4
+	/*
+		nSamples, audio := generateTone(dur, sampleRate, freqA, amplFn(dur))
 
-				nSamples := float64(sampleRate) * dur.Seconds()
-				decInc := math.Pow(end/start, 1/nSamples)
+		n1, a1 := generateTone(dur, sampleRate, freqCsharp, amplFn(dur))
+		nSamples += n1
+		audio = append(audio, a1...)
 
-				return func(currentframe int) float64 {
-					start *= decInc
-					return start
-				}
-			}
-		*/
+		n1, a1 = generateTone(dur, sampleRate, freqE, amplFn(dur))
+		nSamples += n1
+		audio = append(audio, a1...)
+	*/
 
-		/*
-			nSamples, audio := generateTone(dur, sampleRate, freqA, amplFn(dur))
-
-			n1, a1 := generateTone(dur, sampleRate, freqCsharp, amplFn(dur))
-			nSamples += n1
-			audio = append(audio, a1...)
-
-			n1, a1 = generateTone(dur, sampleRate, freqE, amplFn(dur))
-			nSamples += n1
-			audio = append(audio, a1...)
-		*/
-
-		/*
-			doremi := []string{
-				"C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5",
-				"B4", "A4", "G4", "F4", "E4", "D4", "C4",
-				"C4", "C5", "C6", "C7", "C8",
-				"D4", "D5", "D6", "D7", "D8",
-				"E4", "E5", "E6", "E7", "E8",
-				"F4", "F5", "F6", "F7", "F8",
-				"G4", "G5", "G6", "G7", "G8",
-				"A4", "A5", "A6", "A7", "A8",
-			}
-		*/
+	/*
 		doremi := []string{
 			"C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5",
 			"B4", "A4", "G4", "F4", "E4", "D4", "C4",
-			"C5", "D5", "E5", "F5", "G5", "A5", "B5",
-			"C6", "D6", "E6", "F6", "G6", "A6", "B6",
-			"C7", "D7", "E7", "F7", "G7", "A7", "B7",
-			"C8", "D8", "E8", "F8", "G8", "A8", "B8",
+			"C4", "C5", "C6", "C7", "C8",
+			"D4", "D5", "D6", "D7", "D8",
+			"E4", "E5", "E6", "E7", "E8",
+			"F4", "F5", "F6", "F7", "F8",
+			"G4", "G5", "G6", "G7", "G8",
+			"A4", "A5", "A6", "A7", "A8",
 		}
-
-		//doremi = []string{"G4", "E4", "C4", "F4"}
-
-		nSamples := 0
-		audio := make([]byte, 0)
-
-		for _, note := range doremi {
-			freq := noteToFrequency(note)
-
-			n1, a1 := generateTone(dur, sampleRate, float32(freq), amplFn(dur))
-			nSamples += n1
-			audio = append(audio, a1...)
-		}
-
-		fOut, err := os.OpenFile(outFileName, os.O_WRONLY|os.O_CREATE, 0600)
-		if err != nil {
-			panic(err)
-		}
-		defer fOut.Close()
-
-		outNumChannels := 2
-		bitsPerSample := 16
-
-		wavWriter := wav.NewWriter(fOut,
-			uint32(nSamples),
-			uint16(outNumChannels),
-			uint32(sampleRate),
-			uint16(bitsPerSample))
-
-		wavWriter.Write(audio)
-
-		// BPM - 48
-		// 48 beats per minute
-		// 2/4 - 2 beats per measure, quarter note 1 beat
-		// tempo Allegro con brio - 88 BPM
-		// 88 beats - 60 sec
-		//  1 beat  - 60 / 88 = 682 msec
-
-		const quarteNoteDur = 682 * time.Millisecond
-
-		score := []struct {
-			note string
-			dur  time.Duration
-		}{
-			{"G4", quarteNoteDur / 2},
-			{"G4", quarteNoteDur / 2},
-			{"G4", quarteNoteDur / 2},
-			{"Eb4", quarteNoteDur * 2},
-			{"F4", quarteNoteDur / 2},
-			{"F4", quarteNoteDur / 2},
-			{"F4", quarteNoteDur / 2},
-			{"D4", quarteNoteDur * 2},
-		}
-
-		audio = make([]byte, 0)
-		nSamples = 0
-
-		for _, sc := range score {
-			freq := noteToFrequency(sc.note)
-
-			n1, a1 := generateTone(sc.dur, sampleRate, float32(freq), amplFn(sc.dur))
-			nSamples += n1
-			audio = append(audio, a1...)
-		}
-
-		outFileName = "b5test.wav"
-		fOut2, err := os.OpenFile(outFileName, os.O_WRONLY|os.O_CREATE, 0600)
-		if err != nil {
-			panic(err)
-		}
-		defer fOut2.Close()
-
-		wavWriter2 := wav.NewWriter(fOut2,
-			uint32(nSamples),
-			uint16(outNumChannels),
-			uint32(sampleRate),
-			uint16(bitsPerSample))
-
-		wavWriter2.Write(audio)
-
-		return
+	*/
+	doremi := []string{
+		"C4", "D4", "E4", "F4", "G4", "A4", "B4", "C5",
+		"B4", "A4", "G4", "F4", "E4", "D4", "C4",
+		"C5", "D5", "E5", "F5", "G5", "A5", "B5",
+		"C6", "D6", "E6", "F6", "G6", "A6", "B6",
+		"C7", "D7", "E7", "F7", "G7", "A7", "B7",
+		"C8", "D8", "E8", "F8", "G8", "A8", "B8",
 	}
 
-	err = portaudio.Initialize()
+	//doremi = []string{"G4", "E4", "C4", "F4"}
+
+	nSamples := 0
+	audio := make([]byte, 0)
+
+	for _, note := range doremi {
+		freq := noteToFrequency(note)
+
+		n1, a1 := generateTone(dur, sampleRate, float32(freq), amplFn(dur))
+		nSamples += n1
+		audio = append(audio, a1...)
+	}
+
+	fOut, err := os.OpenFile(outFileName, os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
-		return
+		panic(err)
 	}
-	defer portaudio.Terminate()
+	defer fOut.Close()
 
-	ctx, cancelFn := context.WithCancel(context.Background())
-	defer cancelFn()
+	outNumChannels := 2
+	bitsPerSample := 16
 
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	wavWriter := wav.NewWriter(fOut,
+		uint32(nSamples),
+		uint16(outNumChannels),
+		uint32(sampleRate),
+		uint16(bitsPerSample))
 
-	devCnt, err := portaudio.GetDeviceCount()
+	wavWriter.Write(audio)
+
+	// BPM - 48
+	// 48 beats per minute
+	// 2/4 - 2 beats per measure, quarter note 1 beat
+	// tempo Allegro con brio - 88 BPM
+	// 88 beats - 60 sec
+	//  1 beat  - 60 / 88 = 682 msec
+
+	const quarteNoteDur = 682 * time.Millisecond
+
+	score := []struct {
+		note string
+		dur  time.Duration
+	}{
+		{"G4", quarteNoteDur / 2},
+		{"G4", quarteNoteDur / 2},
+		{"G4", quarteNoteDur / 2},
+		{"Eb4", quarteNoteDur * 2},
+		{"F4", quarteNoteDur / 2},
+		{"F4", quarteNoteDur / 2},
+		{"F4", quarteNoteDur / 2},
+		{"D4", quarteNoteDur * 2},
+	}
+
+	audio = make([]byte, 0)
+	nSamples = 0
+
+	for _, sc := range score {
+		freq := noteToFrequency(sc.note)
+
+		n1, a1 := generateTone(sc.dur, sampleRate, float32(freq), amplFn(sc.dur))
+		nSamples += n1
+		audio = append(audio, a1...)
+	}
+
+	outFileName = "b5test.wav"
+	fOut2, err := os.OpenFile(outFileName, os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
-	} else {
-		fmt.Printf("device count: %d\n", devCnt)
+		panic(err)
 	}
+	defer fOut2.Close()
 
-	for devIdx := 0; devIdx < devCnt; devIdx++ {
-		di, err := portaudio.GetDeviceInfo(devIdx)
-		if err != nil {
-			fmt.Printf("ERR: %v\n", err)
-		} else {
-			fmt.Printf("[%d] device: %#v\n", devIdx, di)
-		}
-	}
+	wavWriter2 := wav.NewWriter(fOut2,
+		uint32(nSamples),
+		uint16(outNumChannels),
+		uint32(sampleRate),
+		uint16(bitsPerSample))
 
-	hostApiCnt, err := portaudio.GetHostApiCount()
-	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
-		return
-	}
+	wavWriter2.Write(audio)
 
-	fmt.Printf("Host API Info (count: %d)\n", hostApiCnt)
-	for idx := 0; idx < hostApiCnt; idx++ {
-		hi, err := portaudio.GetHostApiInfo(idx)
-		if err != nil {
-			fmt.Printf("ERR: %v\n", err)
-		} else {
-			fmt.Printf("[%d] api info: %#v\n", idx, hi)
-		}
-	}
-
-	outStreamParams := portaudio.PaStreamParameters{
-		DeviceIndex:  1,
-		ChannelCount: 2,
-		SampleFormat: portaudio.SampleFmtFloat32,
-		//SampleFormat: portaudio.SampleFmtInt24,
-	}
-
-	err = portaudio.IsFormatSupported(nil, &outStreamParams, float32(sampleRate))
-	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
-		return
-	} else {
-		fmt.Printf("Format supported: %v, sampleRate: %d\n", outStreamParams, sampleRate)
-	}
-
-	st, err := portaudio.NewStream(outStreamParams, float32(sampleRate))
-	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
-		return
-	}
-
-	const framesPerBuffer = 2048
-
-	err = st.Open(framesPerBuffer)
-	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
-		return
-	}
-	defer st.Close()
-
-	err = st.StartStream()
-	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
-		return
-	}
-
-	notesGenFn_E := noteSamplesGen(framesPerBuffer, sampleRate, Ampl, freqE)
-
-	playFn := func(ctx context.Context) error {
-		for {
-			dataBuffer := notesGenFn_E()
-			buf := new(bytes.Buffer)
-			for _, d := range dataBuffer {
-				err := binary.Write(buf, binary.LittleEndian, d)
-				if err != nil {
-					return err
-				}
-			}
-
-			err = st.Write(framesPerBuffer, buf.Bytes())
-			if err != nil {
-				// check if context was cancelled
-				if ctx.Err() != nil {
-					fmt.Printf("context err: %v\n", ctx.Err())
-					return nil
-				}
-				return err
-			}
-
-			select {
-			case <-ctx.Done():
-				return nil
-			default:
-			}
-		}
-	}
-
-	go func() {
-		err := playFn(ctx)
-
-		// notify cancel ctx
-		cancelFn()
-
-		if err != nil {
-			fmt.Printf("ERR playFn: %v\n", err)
-		}
-	}()
-
-	<-ctx.Done()
-	fmt.Printf("done\n")
 }
 
 // Attack, Decay, Sustain, Release
@@ -411,25 +269,6 @@ func generateTone(dur time.Duration, sampleRate int, freq float32, amplFn func(i
 		curFrame++
 	}
 	return nSamples, dataBuffer
-}
-
-func noteSamplesGen(framesPerBuffer int,
-	sampleRate int, ampl float64, freq float32) func() []float32 {
-	step := float64(freq) / float64(sampleRate)
-
-	var phase float64
-	dataBuffer := make([]float32, 2*framesPerBuffer)
-	return func() []float32 {
-		for i := 0; i < 2*framesPerBuffer; {
-			val := float32(ampl * math.Sin(2*math.Pi*phase))
-			dataBuffer[i] = val
-			i++
-			dataBuffer[i] = val
-			i++
-			_, phase = math.Modf(phase + step)
-		}
-		return dataBuffer
-	}
 }
 
 func noteToFrequency(note string) float64 {

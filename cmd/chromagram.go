@@ -81,8 +81,6 @@ func doChromagramCmd(cmd *cobra.Command, args []string) {
 	stffRes2 := stff.STFT(audioSamples)
 	spectrogram, _ := dsp.SplitSpectrogram(stffRes2)
 
-	base_octave := 4
-
 	noteIntervals := make([]noteInterval, 0)
 
 	mx := make([][]float64, 0)
@@ -97,7 +95,7 @@ func doChromagramCmd(cmd *cobra.Command, args []string) {
 			if math.Abs(freq) < 0.1 {
 				continue
 			}
-			note := freqToNote(freq, base_octave)
+			note := freqToNote(freq)
 			freqMap[note] += sf
 		}
 		if len(freqMap) == 0 {
@@ -151,7 +149,7 @@ func doChromagramCmd(cmd *cobra.Command, args []string) {
 	h.Rasterized = true
 
 	p := plot.New()
-	p.Title.Text = "Heat map"
+	p.Title.Text = "Chromagram " + inFileName
 
 	p.Add(h)
 
@@ -178,8 +176,64 @@ func doChromagramCmd(cmd *cobra.Command, args []string) {
 
 	p.X.Padding = 0
 	p.Y.Padding = 0
-	//p.X.Max = 1.5
-	//p.Y.Max = 1.5
+	//p.X.Max = 12
+	//p.Y.Max = 12
+
+	tickerFunc := func(min, max float64) []plot.Tick {
+		ticks := []plot.Tick{
+			{
+				Label: "C",
+				Value: 0,
+			},
+			{
+				Label: "C#",
+				Value: 1,
+			},
+			{
+				Label: "D",
+				Value: 2,
+			},
+			{
+				Label: "D#",
+				Value: 3,
+			},
+			{
+				Label: "E",
+				Value: 4,
+			},
+			{
+				Label: "F",
+				Value: 5,
+			},
+			{
+				Label: "F#",
+				Value: 6,
+			},
+			{
+				Label: "G",
+				Value: 7,
+			},
+			{
+				Label: "G#",
+				Value: 8,
+			},
+			{
+				Label: "A",
+				Value: 9,
+			},
+			{
+				Label: "A#",
+				Value: 10,
+			},
+			{
+				Label: "B",
+				Value: 11,
+			},
+		}
+		return ticks
+	}
+
+	p.Y.Tick.Marker = plot.TickerFunc(tickerFunc)
 
 	//p.Y.Max = 10000.0 / 2
 	//p.Y.Max = 1000.0
@@ -235,11 +289,7 @@ func getMaxNote(mp map[string]float64) string {
 	return note
 }
 
-func freqToNote(freq float64, octave int) string {
-	// reference frequency: note A
-	//ref_freq := 440.0
-	// reference octave: 4
-	//ref_octave := 4
+func freqToNote(freq float64) string {
 
 	notes := []string{"B3", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "C5"}
 
@@ -323,5 +373,6 @@ func (hm *chromaData) X(c int) float64 {
 // Y returns the coordinate for the row at the index r.
 // It will panic if r is out of bounds for the grid.
 func (hm *chromaData) Y(r int) float64 {
-	return float64(r) * float64(hm.sampleRate) / (2 * 1024)
+	//return float64(r) * float64(hm.sampleRate) / (2 * 1024)
+	return float64(r)
 }

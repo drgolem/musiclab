@@ -83,9 +83,8 @@ func doSpectrogramCmd(cmd *cobra.Command, args []string) {
 
 	maxFreq := getMaxFreq(spectrogram, sampleRate)
 
-	sOut := printMatrixAsGnuplotFormat(spectrogram, sampleRate)
-
-	os.WriteFile(inFileName+".dat", []byte(sOut), 0644)
+	//sOut := printMatrixAsGnuplotFormat(spectrogram, sampleRate)
+	//os.WriteFile(inFileName+".dat", []byte(sOut), 0644)
 
 	hd := hmData{
 		mx:         spectrogram,
@@ -171,11 +170,11 @@ func (hm *hmData) Dims() (c, r int) {
 // It will panic if c or r are out of bounds for the grid.
 func (hm *hmData) Z(c, r int) float64 {
 	val := hm.mx[c][r]
-	/*
-		if val < 1.0 {
-			val = 0
-		}
-	*/
+
+	if val < 0.5 {
+		val = 0
+	}
+
 	return val
 }
 
