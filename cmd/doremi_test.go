@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,7 @@ func Test_noteToFreq_octave4_12(t *testing.T) {
 		Note    string
 		ExpFreq float64
 	}{
+		{"C#", 277.18},
 		{"C", 261.63},
 		{"C4", 261.63},
 		{"C#4", 277.18},
@@ -62,4 +64,53 @@ func Test_noteToFreq_octave4_12(t *testing.T) {
 	for _, td := range testData {
 		assert.InDeltaf(t, td.ExpFreq, noteToFrequency(td.Note), 0.01, td.Note)
 	}
+}
+
+func Test_noteToFreq_octave4_12min(t *testing.T) {
+
+	testData := []struct {
+		Note    string
+		ExpFreq float64
+	}{
+		{"C#", 277.18},
+		{"C", 261.63},
+		{"C4", 261.63},
+		{"C#4", 277.18},
+		{"Db4", 277.18},
+		{"D", 293.66},
+		{"D4", 293.66},
+		{"D#4", 311.13},
+		{"Eb4", 311.13},
+		{"E4", 329.63},
+		{"E#4", 349.23},
+		{"Fb4", 329.63},
+		{"F4", 349.23},
+		{"F#4", 369.99},
+		{"Gb4", 369.99},
+		{"G4", 392.00},
+		{"G#4", 415.3},
+		{"Ab4", 415.3},
+		{"A4", 440.0},
+		{"A#4", 466.16},
+		{"Bb4", 466.16},
+		{"B4", 493.88},
+		{"Cb5", 493.88},
+		{"B#4", 523.25},
+	}
+
+	min := math.MaxFloat64
+	prev := float64(0)
+	for idx, td := range testData {
+		freq := noteToFrequency(td.Note)
+		assert.InDeltaf(t, td.ExpFreq, freq, 0.01, td.Note)
+
+		if idx >= 1 && freq != prev {
+			mn := math.Abs(freq - prev)
+			if mn < min {
+				min = mn
+			}
+		}
+		prev = freq
+	}
+	assert.InDeltaf(t, 15.55, min, 0.01, "min freq diff")
 }

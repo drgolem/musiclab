@@ -177,20 +177,28 @@ func doDoremiCmd(cmd *cobra.Command, args []string) {
 		// BPM - 48
 		// 48 beats per minute
 		// 2/4 - 2 beats per measure, quarter note 1 beat
-		// 48 beats - 60 sec
-		//  1 beat  - 60 / 48 = 1250 msec
+		// tempo Allegro con brio - 88 BPM
+		// 88 beats - 60 sec
+		//  1 beat  - 60 / 88 = 682 msec
+
+		const quarteNoteDur = 682 * time.Millisecond
 
 		score := []struct {
 			note string
 			dur  time.Duration
 		}{
-			{"G4", 1250 / 2 * time.Millisecond},
-			{"G4", 1250 * time.Millisecond},
-			{"G4", 1250 * time.Millisecond},
-			{"Eb4", 1250 * 2 * time.Millisecond},
+			{"G4", quarteNoteDur / 2},
+			{"G4", quarteNoteDur / 2},
+			{"G4", quarteNoteDur / 2},
+			{"Eb4", quarteNoteDur * 2},
+			{"F4", quarteNoteDur / 2},
+			{"F4", quarteNoteDur / 2},
+			{"F4", quarteNoteDur / 2},
+			{"D4", quarteNoteDur * 2},
 		}
 
 		audio = make([]byte, 0)
+		nSamples = 0
 
 		for _, sc := range score {
 			freq := noteToFrequency(sc.note)
@@ -444,10 +452,9 @@ func noteToFrequency(note string) float64 {
 
 	if noteLen > 1 {
 		// last char is octave number
-		var err error
-		octave, err = strconv.Atoi(note[noteLen-1:])
-		if err != nil {
-			return ref_freq
+		oct, err := strconv.Atoi(note[noteLen-1:])
+		if err == nil {
+			octave = oct
 		}
 	}
 
