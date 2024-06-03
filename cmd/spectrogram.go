@@ -10,7 +10,9 @@ import (
 	"log"
 	"math"
 	"os"
+	"path"
 	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gonum.org/v1/plot"
@@ -53,6 +55,8 @@ func doSpectrogramCmd(cmd *cobra.Command, args []string) {
 		fmt.Printf("path [%s] does not exist\n", inFileName)
 		return
 	}
+
+	fileNameBase := filenameWithoutExtension(inFileName)
 
 	ctx := context.Background()
 	audioData, err := audiosource.AudioSamplesFromFile(ctx, inFileName)
@@ -145,7 +149,7 @@ func doSpectrogramCmd(cmd *cobra.Command, args []string) {
 
 	p.Draw(dc)
 
-	w, err := os.Create(inFileName + ".png")
+	w, err := os.Create(fileNameBase + ".spectr.png")
 	if err != nil {
 		log.Panic(err)
 	}
@@ -204,6 +208,10 @@ func printMatrixAsGnuplotFormat(matrix [][]float64, sampleRate int) string {
 	}
 
 	return buffer.String()
+}
+
+func filenameWithoutExtension(fn string) string {
+	return strings.TrimSuffix(fn, path.Ext(fn))
 }
 
 func getMaxFreq(spectrogram [][]float64, sampleRate int) float64 {

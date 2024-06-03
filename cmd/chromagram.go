@@ -56,6 +56,8 @@ func doChromagramCmd(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	fileNameBase := filenameWithoutExtension(inFileName)
+
 	ctx := context.Background()
 	audioData, err := audiosource.AudioSamplesFromFile(ctx, inFileName)
 	if err != nil {
@@ -251,7 +253,7 @@ func doChromagramCmd(cmd *cobra.Command, args []string) {
 
 	p.Draw(dc)
 
-	w, err := os.Create(inFileName + ".chroma.png")
+	w, err := os.Create(fileNameBase + ".chroma.png")
 	if err != nil {
 		log.Panic(err)
 	}
