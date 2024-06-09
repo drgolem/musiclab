@@ -7,12 +7,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image/color"
 	"log"
 	"math"
 	"os"
 	"path"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gonum.org/v1/plot"
@@ -77,19 +79,46 @@ func doSpectrogramCmd(cmd *cobra.Command, args []string) {
 
 	audioSamplesCopy := slices.Clone(audioSamples)
 
+	//frameShift := 441 // 0.01 sec
+	frameShift := 4410 // 0.1 sec
+	frameSamples := 2048
+
+	t0 := time.Now()
 	stft := dsp.New(
-		int(float64(sampleRate)/100.0), // 0.01 sec
-		2048,
+		frameShift,
+		frameSamples,
 	)
 
 	stftRes := stft.STFT(audioSamplesCopy)
 	spectrogram, _ := dsp.SplitSpectrogram(stftRes)
 
-	maxFreq := getMaxFreq(spectrogram, sampleRate)
+	fmt.Printf("spectrogram %v\n", time.Since(t0))
 
 	//sOut := printMatrixAsGnuplotFormat(spectrogram, sampleRate)
 	//os.WriteFile(inFileName+".dat", []byte(sOut), 0644)
 
+	timeFreqPeaks := make([][]float64, 0)
+
+	t1 := time.Now()
+	for idx, sl := range spectrogram {
+		peaks := octaveBinPeaks(sampleRate, 1.0, sl)
+		//fmt.Printf("%d - %v\n", idx, peaks)
+		timeFreqPeaks = append(timeFreqPeaks, peaks)
+
+		h := peaksHash(peaks)
+		timePt := time.Duration(idx*frameShift*1000/sampleRate) * time.Millisecond
+		fmt.Printf("%d [%v] - %d\n", idx, timePt, h)
+	}
+	fmt.Printf("octave bins %v\n", time.Since(t1))
+
+	t2 := time.Now()
+	plotFileName := fileNameBase + ".spectr.png"
+	plotSpectrogram(plotFileName, sampleRate, spectrogram, timeFreqPeaks)
+	fmt.Printf("plot %v\n", time.Since(t2))
+}
+
+func plotSpectrogram(fileName string, sampleRate int,
+	spectrogram [][]float64, timeFreqPeaks [][]float64) {
 	hd := hmData{
 		mx:         spectrogram,
 		sampleRate: sampleRate,
@@ -103,10 +132,48 @@ func doSpectrogramCmd(cmd *cobra.Command, args []string) {
 
 	h.Rasterized = true
 
+	pts := make(plotter.XYs, 0)
+	for i, peaks := range timeFreqPeaks {
+
+		if i%10 != 0 {
+			continue
+		}
+
+		for _, p := range peaks {
+			if p == 0.0 {
+				continue
+			}
+			pt := plotter.XY{
+				X: float64(i),
+				Y: p,
+			}
+			pts = append(pts, pt)
+		}
+	}
+
 	p := plot.New()
 	p.Title.Text = "Heat map"
 
 	p.Add(h)
+
+	/*
+		err := plotutil.AddScatters(p,
+			pts,
+		)
+		if err != nil {
+			panic(err)
+		}
+	*/
+
+	s, err := plotter.NewScatter(pts)
+	if err != nil {
+		panic(err)
+	}
+	s.GlyphStyle.Color = color.RGBA{R: 255, G: 215, B: 0, A: 255}
+	s.GlyphStyle.Shape = draw.CrossGlyph{}
+	//s.GlyphStyle.Shape = draw.CircleGlyph{}
+	s.GlyphStyle.Radius = 5
+	p.Add(s)
 
 	// Create a legend.
 	l := plot.NewLegend()
@@ -132,6 +199,8 @@ func doSpectrogramCmd(cmd *cobra.Command, args []string) {
 	//p.X.Max = 1.5
 	//p.Y.Max = 1.5
 
+	maxFreq := getMaxFreq(spectrogram, sampleRate)
+
 	p.Y.Max = maxFreq + 100.0
 	//p.Y.Max = 8000.0
 	//p.Y.Max = 1000.0
@@ -149,7 +218,7 @@ func doSpectrogramCmd(cmd *cobra.Command, args []string) {
 
 	p.Draw(dc)
 
-	w, err := os.Create(fileNameBase + ".spectr.png")
+	w, err := os.Create(fileName)
 	if err != nil {
 		log.Panic(err)
 	}

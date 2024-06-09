@@ -293,6 +293,10 @@ func getMaxNote(mp map[string]float64) string {
 
 func freqToNote(freq float64) string {
 
+	if freq < 1.0 {
+		return ""
+	}
+
 	notes := []string{"B3", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "C5"}
 
 	c4 := noteToFrequency("C4")

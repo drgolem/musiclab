@@ -7,20 +7,23 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"math/cmplx"
 	"os"
 	"slices"
 
 	"github.com/drgolem/musiclab/audiosource"
-	"github.com/spf13/cobra"
-	"gonum.org/v1/gonum/dsp/fourier"
 
 	"github.com/fale/sit"
+	"github.com/spf13/cobra"
+	"gonum.org/v1/gonum/dsp/fourier"
 	"gonum.org/v1/plot"
 	"gonum.org/v1/plot/plotter"
 	"gonum.org/v1/plot/plotutil"
 	"gonum.org/v1/plot/vg"
+
+	"github.com/MicahParks/peakdetect"
 )
 
 // fftCmd represents the spectrogram command
@@ -67,18 +70,20 @@ func doFftCmd(cmd *cobra.Command, args []string) {
 	audioSamples := audioData.Audio
 	sampleRate := audioData.SampleRate
 
-	//nSamples := len(audioSamples)
-
-	nSamples := 44100 * 4
-	audioSamples = audioSamples[:nSamples]
+	nSamples := len(audioSamples)
+	//nSamples := 44100 * 4
+	//audioSamples = audioSamples[:nSamples]
 
 	// Initialize an FFT and perform the analysis.
 	fft := fourier.NewFFT(nSamples)
 	coeff := fft.Coefficients(nil, audioSamples)
 
+	spectr := make([]float64, 0)
+
 	var maxFreq, magnitude, mean float64
 	for i, c := range coeff {
 		m := cmplx.Abs(c)
+		spectr = append(spectr, m)
 		mean += m
 		if m > magnitude {
 			magnitude = m
@@ -96,9 +101,9 @@ func doFftCmd(cmd *cobra.Command, args []string) {
 	}
 
 	pts := make(plotter.XYs, 0)
-	for i, c := range coeff {
-		m := cmplx.Abs(c)
-		fq := fft.Freq(i) * float64(sampleRate)
+	for i, m := range spectr {
+		//fq := fft.Freq(i) * float64(sampleRate)
+		fq := float64(i) * float64(sampleRate) / (2 * float64(len(spectr)))
 
 		if fq < 200.0 || fq > 600.0 {
 			continue
@@ -113,7 +118,7 @@ func doFftCmd(cmd *cobra.Command, args []string) {
 
 	p := plot.New()
 
-	p.Title.Text = "Plotutil example"
+	p.Title.Text = "FFT example"
 	p.X.Label.Text = "X"
 	p.Y.Label.Text = "Y"
 
@@ -138,9 +143,8 @@ func doFftCmd(cmd *cobra.Command, args []string) {
 	}
 
 	freqBin := make(map[int]freqMagn, 0)
-	for i, c := range coeff {
-		m := cmplx.Abs(c)
-		fq := fft.Freq(i) * float64(sampleRate)
+	for i, m := range spectr {
+		fq := float64(i) * float64(sampleRate) / (2 * float64(len(spectr)))
 
 		fqInt := int(fq)
 
@@ -170,11 +174,154 @@ func doFftCmd(cmd *cobra.Command, args []string) {
 		fmt.Printf("%d - %v\n", idx, freqArr[idx])
 	}
 
+	// Algorithm configuration from example.
+	const (
+		lag       = 20
+		threshold = 6
+		influence = 0
+	)
+
+	data := spectr
+
+	// Create then initialize the peak detector.
+	detector := peakdetect.NewPeakDetector()
+	err = detector.Initialize(influence, threshold, data[:lag]) // The length of the initial values is the lag.
+	if err != nil {
+		log.Fatalf("Failed to initialize peak detector.\nError: %s", err)
+	}
+
+	spectrNotes := make(map[string]float64)
+
+	// Start processing new data points and determine what signal, if any they produce.
+	//
+	// This method, .Next(), is best for when data are being processed in a stream, but this simply iterates over a
+	// slice.
+	nextDataPoints := data[lag:]
+	for i, newPoint := range nextDataPoints {
+		signal := detector.Next(newPoint)
+		var signalType string
+		switch signal {
+		case peakdetect.SignalNegative:
+			signalType = "negative"
+		case peakdetect.SignalNeutral:
+			signalType = "neutral"
+			continue
+		case peakdetect.SignalPositive:
+			signalType = "positive"
+		}
+
+		val := spectr[i+lag]
+		if val <= 1.0 {
+			continue
+		}
+
+		freq := float64(i+lag) * float64(sampleRate) / (2 * float64(len(spectr)))
+
+		note := freqToNote(freq)
+		spectrNotes[note] += val
+
+		println(fmt.Sprintf("Data point at index %d (%.2f) has the signal: %s, val: %.4f",
+			i+lag, freq, signalType, val))
+	}
+
+	fmt.Printf("%v\n", spectrNotes)
+
+	spectrNotes = make(map[string]float64)
+	for i, m := range spectr {
+		freq := float64(i) * float64(sampleRate) / (2 * float64(len(spectr)))
+
+		if freq < 30.0 || freq > 5000.0 {
+			continue
+		}
+
+		note := freqToNote(freq)
+		spectrNotes[note] += m
+	}
+	fmt.Printf("%v\n", spectrNotes)
+
+	// collect peak frequency in octave separated bins
+
+	binPeakFreq := octaveBinPeaks(sampleRate, 1.0, spectr)
+	h := peaksHash(binPeakFreq)
+
+	fmt.Printf("%v\n", binPeakFreq)
+
+	fmt.Printf("hash: %d\n", h)
+}
+
+func peaksHash(peaks []float64) uint64 {
+	h := uint64(0)
+	p := uint64(1)
+	idx := len(peaks) - 1
+	for idx >= 0 {
+		// round by clearing last bit
+		v := uint64(int64(peaks[idx]) & ^1)
+		h *= 1000
+		h += v
+		p = 1000 * p
+		idx--
+	}
+
+	return h
+}
+
+func octaveBinPeaks(sampleRate int, minAmpl float64, spectr []float64) []float64 {
+	binNotesNames := []string{
+		"C2", "C3", "C4", "C5", "C6", "C8",
+	}
+
+	binNotes := make([]float64, 0)
+
+	for _, nt := range binNotesNames {
+		freq := noteToFrequency(nt)
+		binNotes = append(binNotes, freq)
+	}
+
+	/*
+		for idx, nt := range binNotesNames {
+			fmt.Printf("%s - %.2f\n", nt, binNotes[idx])
+		}
+	*/
+
+	freqToBinIndex := func(freq float64) int {
+		idx := 0
+		for idx < len(binNotes) && binNotes[idx] < freq {
+			idx++
+		}
+		return idx
+	}
+
+	binFreqAmpl := make([]float64, len(binNotes)+1)
+	binPeakFreq := make([]float64, len(binNotes)+1)
+
+	for i, m := range spectr {
+		freq := float64(i) * float64(sampleRate) / (2 * float64(len(spectr)))
+
+		if freq < 30.0 || freq > 5000.0 {
+			continue
+		}
+
+		if m < minAmpl {
+			continue
+		}
+
+		idx := freqToBinIndex(freq)
+		if binFreqAmpl[idx] < m {
+			binFreqAmpl[idx] = m
+			binPeakFreq[idx] = freq
+		}
+	}
+	//fmt.Printf("%v\n", binFreqAmpl)
+	return binPeakFreq
+}
+
+func exampleFft() {
 	const (
 		//mC      = 261.625565 // Hz
 		//mC      = 415.3 // Hz
-		mC      = 440.0 // Hz
-		samples = 44100 * 2
+		sampleRate = 44100
+		mC         = 440.0 // Hz
+		samples    = sampleRate * 2
 		//samples = 32768
 		Ampl = 0.7
 	)
@@ -198,5 +345,4 @@ func doFftCmd(cmd *cobra.Command, args []string) {
 	}
 	fmt.Printf("freq=%v Hz, magnitude=%.0f, mean=%.4f\n",
 		maxFreq2, magnitude2, mean2/samples)
-
 }
