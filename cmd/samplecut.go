@@ -67,7 +67,6 @@ func doSamplecutCmd(cmd *cobra.Command, args []string) {
 		fmt.Printf("ERR: %v\n", err)
 		return
 	}
-
 	dur, err := time.ParseDuration(durtStr)
 	if err != nil {
 		fmt.Printf("ERR: %v\n", err)
@@ -82,15 +81,14 @@ func doSamplecutCmd(cmd *cobra.Command, args []string) {
 
 	const framesPerBuffer = 2048
 
-	audioDataChan, audioFormat, closeFn, err := audiosource.MusicAudioProducer(ctx, inFileName, framesPerBuffer)
+	audioDataChan, audioFormat, closeFn, err := audiosource.MusicAudioProducer(ctx, inFileName, audiosource.WithFramesPerBuffer(framesPerBuffer))
 	if err != nil {
 		fmt.Printf("ERR: %v\n", err)
 		return
 	}
 	defer closeFn()
 
-	fmt.Printf("Resamping: %s\n", inFileName)
-	fmt.Printf("Encoding: Signed 16bit\n")
+	fmt.Printf("Samplecut: %s\n", inFileName)
 	fmt.Printf("Channels: %d\n", audioFormat.NumChannels)
 	fmt.Printf("Input Sample Rate: %d\n", audioFormat.SampleRate)
 
@@ -117,10 +115,11 @@ func doSamplecutCmd(cmd *cobra.Command, args []string) {
 		}
 
 		pctStartPos := 0
+		pctSamplesCount := pct.SamplesCount
 		if startSamplesPos > samplesPos && startSamplesPos < samplesPos+pct.SamplesCount {
 			pctStartPos = startSamplesPos - samplesPos
 		}
-		pctSamplesCount := pct.SamplesCount
+
 		if samplesCnt+pct.SamplesCount > outSamplesCnt {
 			pctSamplesCount = outSamplesCnt - samplesCnt
 		}
@@ -128,7 +127,9 @@ func doSamplecutCmd(cmd *cobra.Command, args []string) {
 		samplesPos += pct.SamplesCount
 		samplesCnt += pct.SamplesCount
 
-		audioData = append(audioData, pct.Audio[pctStartPos:pctSamplesCount*frameByteSize]...)
+		pctByteStart := pctStartPos * frameByteSize
+		pctByteEnd := pctSamplesCount * frameByteSize
+		audioData = append(audioData, pct.Audio[pctByteStart:pctByteEnd]...)
 
 		if samplesCnt >= outSamplesCnt {
 			break

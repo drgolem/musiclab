@@ -78,7 +78,7 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 
 	const framesPerBuffer = 2048
 
-	audioDataChan, audioFormat, closeFn, err := audiosource.MusicAudioProducer(ctx, inFileName, framesPerBuffer)
+	audioDataChan, audioFormat, closeFn, err := audiosource.MusicAudioProducer(ctx, inFileName, audiosource.WithFramesPerBuffer(framesPerBuffer))
 	if err != nil {
 		fmt.Printf("ERR: %v\n", err)
 		return

@@ -24,7 +24,7 @@ func AudioSamplesFromFile(ctx context.Context, fileName string) (AudioSamples, e
 
 	const framesPerBuffer = 2048
 
-	audioDataChan, audioFormat, closeFn, err := MusicAudioProducer(ctx, fileName, framesPerBuffer)
+	audioDataChan, audioFormat, closeFn, err := MusicAudioProducer(ctx, fileName, WithFramesPerBuffer(framesPerBuffer))
 	if err != nil {
 		return out, err
 	}

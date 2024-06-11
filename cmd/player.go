@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/drgolem/go-portaudio/portaudio"
 	"github.com/spf13/cobra"
@@ -34,6 +35,8 @@ func init() {
 	rootCmd.AddCommand(playerCmd)
 
 	playerCmd.Flags().String("file", "", "file to play")
+	playerCmd.Flags().String("start", "0", "start play at specified time")
+	playerCmd.Flags().String("duration", "0", "duration of play (0 - play all)")
 }
 
 func doPlayerCmd(cmd *cobra.Command, args []string) {
@@ -44,6 +47,28 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 	}
 	if _, err := os.Stat(fileName); os.IsNotExist(err) {
 		fmt.Printf("path [%s] does not exist\n", fileName)
+		return
+	}
+
+	startStr, err := cmd.Flags().GetString("start")
+	if err != nil {
+		fmt.Printf("ERR: %v\n", err)
+		return
+	}
+	start, err := time.ParseDuration(startStr)
+	if err != nil {
+		fmt.Printf("ERR: %v\n", err)
+		return
+	}
+
+	durtStr, err := cmd.Flags().GetString("duration")
+	if err != nil {
+		fmt.Printf("ERR: %v\n", err)
+		return
+	}
+	dur, err := time.ParseDuration(durtStr)
+	if err != nil {
+		fmt.Printf("ERR: %v\n", err)
 		return
 	}
 
@@ -58,7 +83,10 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 
 	const framesPerBuffer = 2048
 
-	audioDataChan, audioFormat, closeFn, err := audiosource.MusicAudioProducer(ctx, fileName, framesPerBuffer)
+	audioDataChan, audioFormat, closeFn, err := audiosource.MusicAudioProducer(ctx, fileName,
+		audiosource.WithFramesPerBuffer(framesPerBuffer),
+		audiosource.WithPlayStartPos(start),
+		audiosource.WithPlayDuration(dur))
 	if err != nil {
 		fmt.Printf("ERR: %v\n", err)
 		return

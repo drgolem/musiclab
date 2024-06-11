@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/drgolem/go-flac/flac"
 	"github.com/drgolem/go-mpg123/mpg123"
@@ -39,10 +40,42 @@ type musicDecoder interface {
 	Close() error
 }
 
-func MusicAudioProducer(ctx context.Context, fileName string,
-	framesPerBuffer int) (<-chan AudioSamplesPacket, AudioFormat, func() error, error) {
+type ProducerOptions struct {
+	FramesPerBuffer int
+	Start           time.Duration
+	Duration        time.Duration
+}
+
+type SetOptionsFn func(opt *ProducerOptions)
+
+func WithFramesPerBuffer(framesPerBuffer int) SetOptionsFn {
+	return func(opt *ProducerOptions) {
+		opt.FramesPerBuffer = framesPerBuffer
+	}
+}
+
+func WithPlayDuration(dur time.Duration) SetOptionsFn {
+	return func(opt *ProducerOptions) {
+		opt.Duration = dur
+	}
+}
+
+func WithPlayStartPos(start time.Duration) SetOptionsFn {
+	return func(opt *ProducerOptions) {
+		opt.Start = start
+	}
+}
+
+func MusicAudioProducer(ctx context.Context, fileName string, opts ...SetOptionsFn) (<-chan AudioSamplesPacket, AudioFormat, func() error, error) {
 	audioChan := make(chan AudioSamplesPacket)
 	var audioFormat AudioFormat
+
+	opt := ProducerOptions{
+		FramesPerBuffer: 2048,
+	}
+	for _, sf := range opts {
+		sf(&opt)
+	}
 
 	closeFn := func() error {
 		return nil
@@ -128,8 +161,11 @@ func MusicAudioProducer(ctx context.Context, fileName string,
 	}
 
 	go func(ctx context.Context) {
+		startSamplesPos := int(opt.Start.Seconds() * float64(audioFormat.SampleRate))
+		samplesPos := 0
 		for {
-			audioBufSize := 4 * 2 * framesPerBuffer
+			framesPerBuffer := opt.FramesPerBuffer
+			audioBufSize := 4 * numChannels * framesPerBuffer
 			audio := make([]byte, audioBufSize)
 			nSamples, err := decoder.DecodeSamples(framesPerBuffer, audio)
 			if nSamples == 0 {
@@ -148,7 +184,17 @@ func MusicAudioProducer(ctx context.Context, fileName string,
 				SamplesCount: nSamples,
 			}
 
-			audioChan <- pct
+			skipPacket := false
+			if startSamplesPos > samplesPos+pct.SamplesCount {
+				samplesPos += pct.SamplesCount
+				skipPacket = true
+			}
+
+			if !skipPacket {
+				audioChan <- pct
+			}
+
+			samplesPos += pct.SamplesCount
 
 			select {
 			case <-ctx.Done():
