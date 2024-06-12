@@ -7,11 +7,12 @@ import (
 	"github.com/drgolem/go-portaudio/portaudio"
 
 	"github.com/drgolem/musiclab/audiosource"
+	"github.com/drgolem/musiclab/types"
 )
 
 func PortaudioConsumer(deviceIdx int,
 	framesPerBuffer int,
-	audioFormat audiosource.AudioFormat,
+	audioFormat types.FrameFormat,
 	audioPctChan <-chan audiosource.AudioSamplesPacket) (playFn func(ctx context.Context) error, closeFn func() error, errRes error) {
 
 	closeFn = func() error {
@@ -25,7 +26,7 @@ func PortaudioConsumer(deviceIdx int,
 
 	outStreamParams := portaudio.PaStreamParameters{
 		DeviceIndex:  deviceIdx,
-		ChannelCount: audioFormat.NumChannels,
+		ChannelCount: audioFormat.Channels,
 		SampleFormat: sampleformat,
 	}
 	stream, err := portaudio.NewStream(outStreamParams, float32(audioFormat.SampleRate))

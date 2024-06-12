@@ -10,22 +10,8 @@ import (
 	"github.com/drgolem/go-mpg123/mpg123"
 
 	"github.com/drgolem/musiclab/decoders"
+	"github.com/drgolem/musiclab/types"
 )
-
-type FileFormatType string
-
-const (
-	FileFormat_MP3  FileFormatType = ".mp3"
-	FileFormat_OGG  FileFormatType = ".ogg"
-	FileFormat_FLAC FileFormatType = ".flac"
-	FileFormat_WAV  FileFormatType = ".wav"
-)
-
-type AudioFormat struct {
-	SampleRate    int
-	NumChannels   int
-	BitsPerSample int
-}
 
 type AudioSamplesPacket struct {
 	Audio        []byte
@@ -66,9 +52,11 @@ func WithPlayStartPos(start time.Duration) SetOptionsFn {
 	}
 }
 
-func MusicAudioProducer(ctx context.Context, fileName string, opts ...SetOptionsFn) (<-chan AudioSamplesPacket, AudioFormat, func() error, error) {
+func MusicAudioProducer(ctx context.Context,
+	fileName string, opts ...SetOptionsFn) (<-chan AudioSamplesPacket, types.FrameFormat, func() error, error) {
+
 	audioChan := make(chan AudioSamplesPacket)
-	var audioFormat AudioFormat
+	var audioFormat types.FrameFormat
 
 	opt := ProducerOptions{
 		FramesPerBuffer: 2048,
@@ -82,12 +70,12 @@ func MusicAudioProducer(ctx context.Context, fileName string, opts ...SetOptions
 	}
 
 	ext := filepath.Ext(fileName)
-	fileFormat := FileFormatType(ext)
+	fileFormat := types.FileFormatType(ext)
 
 	var decoder musicDecoder
 
 	switch fileFormat {
-	case FileFormat_MP3:
+	case types.FileFormat_MP3:
 		mp3Decoder, err := mpg123.NewDecoder("")
 		if err != nil {
 			return audioChan, audioFormat, closeFn, err
@@ -100,7 +88,7 @@ func MusicAudioProducer(ctx context.Context, fileName string, opts ...SetOptions
 			mp3Decoder.Delete()
 			return nil
 		}
-	case FileFormat_OGG:
+	case types.FileFormat_OGG:
 		streamType, err := decoders.GetOggFileStreamType(fileName)
 		if err != nil {
 			return audioChan, audioFormat, closeFn, err
@@ -123,7 +111,7 @@ func MusicAudioProducer(ctx context.Context, fileName string, opts ...SetOptions
 		closeFn = func() error {
 			return decoder.Close()
 		}
-	case FileFormat_FLAC:
+	case types.FileFormat_FLAC:
 		flacDecoder, err := flac.NewFlacFrameDecoder(16)
 		if err != nil {
 			return audioChan, audioFormat, closeFn, err
@@ -132,7 +120,7 @@ func MusicAudioProducer(ctx context.Context, fileName string, opts ...SetOptions
 		closeFn = func() error {
 			return decoder.Close()
 		}
-	case FileFormat_WAV:
+	case types.FileFormat_WAV:
 		wavDecoder, err := decoders.NewWavDecoder()
 		if err != nil {
 			return audioChan, audioFormat, closeFn, err
@@ -154,9 +142,9 @@ func MusicAudioProducer(ctx context.Context, fileName string, opts ...SetOptions
 	}
 
 	sampleRate, numChannels, bitsPerSample := decoder.GetFormat()
-	audioFormat = AudioFormat{
+	audioFormat = types.FrameFormat{
 		SampleRate:    sampleRate,
-		NumChannels:   numChannels,
+		Channels:      numChannels,
 		BitsPerSample: bitsPerSample,
 	}
 

@@ -87,7 +87,7 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("Resamping: %s\n", inFileName)
 	fmt.Printf("Encoding: Signed 16bit\n")
-	fmt.Printf("Channels: %d\n", audioFormat.NumChannels)
+	fmt.Printf("Channels: %d\n", audioFormat.Channels)
 	fmt.Printf("Input Sample Rate: %d\n", audioFormat.SampleRate)
 	fmt.Printf("Output Sample Rate: %d\n", newSampleRate)
 
@@ -107,7 +107,7 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 	res, err := soxr.New(bufWriter,
 		float64(audioFormat.SampleRate),
 		float64(newSampleRate),
-		audioFormat.NumChannels,
+		audioFormat.Channels,
 		soxr.I16,
 		soxr.HighQ)
 	if err != nil {
@@ -123,13 +123,13 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 	fmt.Printf("%v\n", ns)
 	res.Close()
 
-	outSamplesCnt := buf.Len() / (audioFormat.NumChannels * audioFormat.BitsPerSample / 8)
+	outSamplesCnt := buf.Len() / (audioFormat.Channels * audioFormat.BitsPerSample / 8)
 
-	outNumChannels := audioFormat.NumChannels
+	outNumChannels := audioFormat.Channels
 
 	var outputData []byte
 
-	if convertToMono && audioFormat.NumChannels == 2 {
+	if convertToMono && audioFormat.Channels == 2 {
 		var bufMono bytes.Buffer
 		bufMonoWriter := bufio.NewWriter(&bufMono)
 

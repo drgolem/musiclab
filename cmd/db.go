@@ -21,8 +21,8 @@ import (
 
 	"github.com/drgolem/musiclab/audiosource"
 	"github.com/drgolem/musiclab/dsp"
-	"github.com/drgolem/sonet/scan"
-	"github.com/drgolem/sonet/types"
+	"github.com/drgolem/musiclab/scan"
+	"github.com/drgolem/musiclab/types"
 )
 
 // dbCmd represents the db command

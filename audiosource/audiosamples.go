@@ -43,7 +43,7 @@ func AudioSamplesFromFile(ctx context.Context, fileName string) (AudioSamples, e
 	}
 
 	// mix stereo to mono
-	if audioFormat.NumChannels == 2 {
+	if audioFormat.Channels == 2 {
 		var bufMono bytes.Buffer
 		bufMonoWriter := bufio.NewWriter(&bufMono)
 

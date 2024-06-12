@@ -95,7 +95,7 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("Encoding: Signed 16bit\n")
 	fmt.Printf("Sample Rate: %d\n", audioFormat.SampleRate)
-	fmt.Printf("Channels: %d\n", audioFormat.NumChannels)
+	fmt.Printf("Channels: %d\n", audioFormat.Channels)
 
 	deviceIdx := 1
 
