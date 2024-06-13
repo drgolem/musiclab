@@ -17,12 +17,12 @@ require (
 	github.com/jfreymuth/oggvorbis v1.0.5
 	github.com/jfreymuth/vorbis v1.0.2
 	github.com/karrick/godirwalk v1.17.0
-	github.com/mewkiz/flac v1.0.8
+	github.com/mewkiz/flac v1.0.10
 	github.com/spf13/cobra v1.8.0
-	github.com/stretchr/testify v1.8.1
+	github.com/stretchr/testify v1.9.0
 	github.com/youpy/go-wav v0.3.2
 	github.com/zaf/resample v1.5.0
-	golang.org/x/sync v0.5.0
+	golang.org/x/sync v0.7.0
 	gonum.org/v1/gonum v0.15.0
 	gonum.org/v1/plot v0.14.0
 )
@@ -42,12 +42,12 @@ require (
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/golang/glog v1.0.0 // indirect
 	github.com/golang/groupcache v0.0.0-20190702054246-869f871628b6 // indirect
-	github.com/golang/protobuf v1.5.3 // indirect
+	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/golang/snappy v0.0.3 // indirect
 	github.com/google/flatbuffers v1.12.1 // indirect
 	github.com/icza/bitio v1.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/klauspost/compress v1.13.6 // indirect
+	github.com/klauspost/compress v1.12.3 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mewkiz/pkg v0.0.0-20230226050401-4010bf0fec14 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -57,9 +57,9 @@ require (
 	github.com/zaf/g711 v0.0.0-20190814101024-76a4a538f52b // indirect
 	go.opencensus.io v0.22.5 // indirect
 	golang.org/x/image v0.14.0 // indirect
-	golang.org/x/net v0.8.0 // indirect
-	golang.org/x/sys v0.18.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
-	google.golang.org/protobuf v1.30.0 // indirect
+	golang.org/x/net v0.26.0 // indirect
+	golang.org/x/sys v0.21.0 // indirect
+	golang.org/x/text v0.16.0 // indirect
+	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
