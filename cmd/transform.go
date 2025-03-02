@@ -78,24 +78,24 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 
 	const framesPerBuffer = 2048
 
-	audioDataChan, audioFormat, closeFn, err := audiosource.MusicAudioProducer(ctx, inFileName, audiosource.WithFramesPerBuffer(framesPerBuffer))
+	audioStream, err := audiosource.MusicAudioProducer(ctx, inFileName, audiosource.WithFramesPerBuffer(framesPerBuffer))
 	if err != nil {
 		fmt.Printf("ERR: %v\n", err)
 		return
 	}
-	defer closeFn()
+	defer audioStream.CancelFunc()
 
 	fmt.Printf("Resamping: %s\n", inFileName)
 	fmt.Printf("Encoding: Signed 16bit\n")
-	fmt.Printf("Channels: %d\n", audioFormat.Channels)
-	fmt.Printf("Input Sample Rate: %d\n", audioFormat.SampleRate)
+	fmt.Printf("Channels: %d\n", audioStream.AudioFormat.Channels)
+	fmt.Printf("Input Sample Rate: %d\n", audioStream.AudioFormat.SampleRate)
 	fmt.Printf("Output Sample Rate: %d\n", newSampleRate)
 
 	inSamplesCnt := 0
 
 	audioData := make([]byte, 0)
 
-	for pct := range audioDataChan {
+	for pct := range audioStream.Stream {
 		inSamplesCnt += pct.SamplesCount
 
 		audioData = append(audioData, pct.Audio[:pct.SamplesCount*4]...)
@@ -105,9 +105,9 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 	bufWriter := bufio.NewWriter(&buf)
 
 	res, err := soxr.New(bufWriter,
-		float64(audioFormat.SampleRate),
+		float64(audioStream.AudioFormat.SampleRate),
 		float64(newSampleRate),
-		audioFormat.Channels,
+		audioStream.AudioFormat.Channels,
 		soxr.I16,
 		soxr.HighQ)
 	if err != nil {
@@ -123,13 +123,13 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 	fmt.Printf("%v\n", ns)
 	res.Close()
 
-	outSamplesCnt := buf.Len() / (audioFormat.Channels * audioFormat.BitsPerSample / 8)
+	outSamplesCnt := buf.Len() / (audioStream.AudioFormat.Channels * audioStream.AudioFormat.BitsPerSample / 8)
 
-	outNumChannels := audioFormat.Channels
+	outNumChannels := audioStream.AudioFormat.Channels
 
 	var outputData []byte
 
-	if convertToMono && audioFormat.Channels == 2 {
+	if convertToMono && audioStream.AudioFormat.Channels == 2 {
 		var bufMono bytes.Buffer
 		bufMonoWriter := bufio.NewWriter(&bufMono)
 
@@ -171,7 +171,7 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 		uint32(outSamplesCnt),
 		uint16(outNumChannels),
 		uint32(newSampleRate),
-		uint16(audioFormat.BitsPerSample))
+		uint16(audioStream.AudioFormat.BitsPerSample))
 
 	wavWriter.Write(outputData)
 

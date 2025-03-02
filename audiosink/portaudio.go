@@ -1,4 +1,4 @@
-package audioconsumer
+package audiosink
 
 import (
 	"context"
@@ -10,10 +10,11 @@ import (
 	"github.com/drgolem/musiclab/types"
 )
 
-func PortaudioConsumer(deviceIdx int,
+func NewPortAudioSink(deviceIdx int,
 	framesPerBuffer int,
 	audioFormat types.FrameFormat,
-	audioPctChan <-chan audiosource.AudioSamplesPacket) (playFn func(ctx context.Context) error, closeFn func() error, errRes error) {
+	audioPctChan <-chan audiosource.AudioSamplesPacket,
+) (playFn func(ctx context.Context) error, closeFn func() error, errRes error) {
 
 	closeFn = func() error {
 		return nil

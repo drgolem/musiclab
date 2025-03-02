@@ -14,7 +14,7 @@ import (
 	"github.com/drgolem/go-portaudio/portaudio"
 	"github.com/spf13/cobra"
 
-	"github.com/drgolem/musiclab/audioconsumer"
+	"github.com/drgolem/musiclab/audiosink"
 	"github.com/drgolem/musiclab/audiosource"
 )
 
@@ -83,7 +83,7 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 
 	const framesPerBuffer = 2048
 
-	audioDataChan, audioFormat, closeFn, err := audiosource.MusicAudioProducer(ctx, fileName,
+	audioStream, err := audiosource.MusicAudioProducer(ctx, fileName,
 		audiosource.WithFramesPerBuffer(framesPerBuffer),
 		audiosource.WithPlayStartPos(start),
 		audiosource.WithPlayDuration(dur))
@@ -91,18 +91,18 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 		fmt.Printf("ERR: %v\n", err)
 		return
 	}
-	defer closeFn()
+	defer audioStream.CancelFunc()
 
 	fmt.Printf("Encoding: Signed 16bit\n")
-	fmt.Printf("Sample Rate: %d\n", audioFormat.SampleRate)
-	fmt.Printf("Channels: %d\n", audioFormat.Channels)
-
+	fmt.Printf("Sample Rate: %d\n", audioStream.AudioFormat.SampleRate)
+	fmt.Printf("Channels: %d\n", audioStream.AudioFormat.Channels)
 	deviceIdx := 1
 
 	portaudio.Initialize()
 	defer portaudio.Terminate()
 
-	playFn, consumerCloseFn, err := audioconsumer.PortaudioConsumer(deviceIdx, framesPerBuffer, audioFormat, audioDataChan)
+	playFn, consumerCloseFn, err := audiosink.NewPortAudioSink(deviceIdx,
+		framesPerBuffer, audioStream.AudioFormat, audioStream.Stream)
 	if err != nil {
 		fmt.Printf("ERR: %v\n", err)
 		return

@@ -52,12 +52,16 @@ func WithPlayStartPos(start time.Duration) SetOptionsFn {
 	}
 }
 
+type AudioStream struct {
+	AudioFormat types.FrameFormat
+	Stream      <-chan AudioSamplesPacket
+	CancelFunc  func() error
+}
+
 func MusicAudioProducer(ctx context.Context,
-	fileName string, opts ...SetOptionsFn) (<-chan AudioSamplesPacket, types.FrameFormat, func() error, error) {
-
-	audioChan := make(chan AudioSamplesPacket)
-	var audioFormat types.FrameFormat
-
+	fileName string,
+	opts ...SetOptionsFn,
+) (*AudioStream, error) {
 	opt := ProducerOptions{
 		FramesPerBuffer: 2048,
 	}
@@ -78,7 +82,7 @@ func MusicAudioProducer(ctx context.Context,
 	case types.FileFormat_MP3:
 		mp3Decoder, err := mpg123.NewDecoder("")
 		if err != nil {
-			return audioChan, audioFormat, closeFn, err
+			return nil, err
 		}
 
 		fmt.Printf("Decoder: %s\n", mp3Decoder.CurrentDecoder())
@@ -91,20 +95,20 @@ func MusicAudioProducer(ctx context.Context,
 	case types.FileFormat_OGG:
 		streamType, err := decoders.GetOggFileStreamType(fileName)
 		if err != nil {
-			return audioChan, audioFormat, closeFn, err
+			return nil, err
 		}
 		fmt.Printf("file %s, stream type: %v\n", fileName, streamType)
 		if streamType == decoders.StreamType_Vorbis {
 			vorbisDecoder, err := decoders.NewOggVorbisDecoder()
 			if err != nil {
-				return audioChan, audioFormat, closeFn, err
+				return nil, err
 			}
 			decoder = vorbisDecoder
 		} else if streamType == decoders.StreamType_Opus {
 			//opusDecoder, err := decoders.NewOggOpusDecoder()
 			opusDecoder, err := decoders.NewOggOpusFileDecoder()
 			if err != nil {
-				return audioChan, audioFormat, closeFn, err
+				return nil, err
 			}
 			decoder = opusDecoder
 		}
@@ -114,7 +118,7 @@ func MusicAudioProducer(ctx context.Context,
 	case types.FileFormat_FLAC:
 		flacDecoder, err := flac.NewFlacFrameDecoder(16)
 		if err != nil {
-			return audioChan, audioFormat, closeFn, err
+			return nil, err
 		}
 		decoder = flacDecoder
 		closeFn = func() error {
@@ -123,29 +127,37 @@ func MusicAudioProducer(ctx context.Context,
 	case types.FileFormat_WAV:
 		wavDecoder, err := decoders.NewWavDecoder()
 		if err != nil {
-			return audioChan, audioFormat, closeFn, err
+			return nil, err
 		}
 		decoder = wavDecoder
 		closeFn = func() error {
 			return decoder.Close()
 		}
 	default:
-		return audioChan, audioFormat, closeFn, fmt.Errorf("unsupported file format: %s", ext)
+		return nil, fmt.Errorf("unsupported file format: %s", ext)
 	}
 
 	if decoder == nil {
-		return audioChan, audioFormat, closeFn, fmt.Errorf("unknown decoder")
+		return nil, fmt.Errorf("unknown decoder")
 	}
 	err := decoder.Open(fileName)
 	if err != nil {
-		return audioChan, audioFormat, closeFn, err
+		return nil, err
 	}
 
 	sampleRate, numChannels, bitsPerSample := decoder.GetFormat()
-	audioFormat = types.FrameFormat{
+	audioFormat := types.FrameFormat{
 		SampleRate:    sampleRate,
 		Channels:      numChannels,
 		BitsPerSample: bitsPerSample,
+	}
+
+	audioPacketStream := make(chan AudioSamplesPacket)
+
+	audioStream := AudioStream{
+		AudioFormat: audioFormat,
+		CancelFunc:  closeFn,
+		Stream:      audioPacketStream,
 	}
 
 	go func(ctx context.Context) {
@@ -158,12 +170,12 @@ func MusicAudioProducer(ctx context.Context,
 			nSamples, err := decoder.DecodeSamples(framesPerBuffer, audio)
 			if nSamples == 0 {
 				// done reading audio, close output channel
-				close(audioChan)
+				close(audioPacketStream)
 				break
 			}
 			if err != nil {
 				fmt.Printf("ERR: %v\n", err)
-				close(audioChan)
+				close(audioPacketStream)
 				return
 			}
 
@@ -179,19 +191,19 @@ func MusicAudioProducer(ctx context.Context,
 			}
 
 			if !skipPacket {
-				audioChan <- pct
+				audioPacketStream <- pct
 			}
 
 			samplesPos += pct.SamplesCount
 
 			select {
 			case <-ctx.Done():
-				close(audioChan)
+				close(audioPacketStream)
 				return
 			default:
 			}
 		}
 	}(ctx)
 
-	return audioChan, audioFormat, closeFn, nil
+	return &audioStream, nil
 }
