@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/drgolem/go-flac/flac"
@@ -52,16 +53,27 @@ func WithPlayStartPos(start time.Duration) SetOptionsFn {
 	}
 }
 
-type AudioStream struct {
-	AudioFormat types.FrameFormat
-	Stream      <-chan AudioSamplesPacket
-	CancelFunc  func() error
+type AudioStream interface {
+	GetFormat() types.FrameFormat
+	Stream() <-chan AudioSamplesPacket
+	Close() error
+}
+
+type fileAudioStream struct {
+	AudioStream
+
+	audioFormat types.FrameFormat
+	stream      <-chan AudioSamplesPacket
+	closeFunc   func() error
+
+	decoder musicDecoder
+	mx      sync.Mutex
 }
 
 func MusicAudioProducer(ctx context.Context,
 	fileName string,
 	opts ...SetOptionsFn,
-) (*AudioStream, error) {
+) (AudioStream, error) {
 	opt := ProducerOptions{
 		FramesPerBuffer: 2048,
 	}
@@ -69,12 +81,18 @@ func MusicAudioProducer(ctx context.Context,
 		sf(&opt)
 	}
 
-	closeFn := func() error {
-		return nil
+	audioPacketStream := make(chan AudioSamplesPacket, 1)
+
+	audioStream := fileAudioStream{
+		//AudioFormat: audioFormat,
+		//CancelFunc:  closeFn,
+		stream: audioPacketStream,
 	}
 
 	ext := filepath.Ext(fileName)
 	fileFormat := types.FileFormatType(ext)
+
+	var closeFn func() error
 
 	var decoder musicDecoder
 
@@ -88,6 +106,8 @@ func MusicAudioProducer(ctx context.Context,
 		fmt.Printf("Decoder: %s\n", mp3Decoder.CurrentDecoder())
 		decoder = mp3Decoder
 		closeFn = func() error {
+			audioStream.mx.Lock()
+			defer audioStream.mx.Unlock()
 			decoder.Close()
 			mp3Decoder.Delete()
 			return nil
@@ -113,6 +133,8 @@ func MusicAudioProducer(ctx context.Context,
 			decoder = opusDecoder
 		}
 		closeFn = func() error {
+			audioStream.mx.Lock()
+			defer audioStream.mx.Unlock()
 			return decoder.Close()
 		}
 	case types.FileFormat_FLAC:
@@ -122,6 +144,8 @@ func MusicAudioProducer(ctx context.Context,
 		}
 		decoder = flacDecoder
 		closeFn = func() error {
+			audioStream.mx.Lock()
+			defer audioStream.mx.Unlock()
 			return decoder.Close()
 		}
 	case types.FileFormat_WAV:
@@ -131,6 +155,8 @@ func MusicAudioProducer(ctx context.Context,
 		}
 		decoder = wavDecoder
 		closeFn = func() error {
+			audioStream.mx.Lock()
+			defer audioStream.mx.Unlock()
 			return decoder.Close()
 		}
 	default:
@@ -152,22 +178,22 @@ func MusicAudioProducer(ctx context.Context,
 		BitsPerSample: bitsPerSample,
 	}
 
-	audioPacketStream := make(chan AudioSamplesPacket)
-
-	audioStream := AudioStream{
-		AudioFormat: audioFormat,
-		CancelFunc:  closeFn,
-		Stream:      audioPacketStream,
-	}
+	audioStream.audioFormat = audioFormat
+	audioStream.decoder = decoder
+	audioStream.closeFunc = closeFn
 
 	go func(ctx context.Context) {
 		startSamplesPos := int(opt.Start.Seconds() * float64(audioFormat.SampleRate))
+		outSamplesCnt := int(opt.Duration.Seconds() * float64(audioStream.audioFormat.SampleRate))
 		samplesPos := 0
+		samplesCnt := 0
 		for {
 			framesPerBuffer := opt.FramesPerBuffer
 			audioBufSize := 4 * numChannels * framesPerBuffer
 			audio := make([]byte, audioBufSize)
+			audioStream.mx.Lock()
 			nSamples, err := decoder.DecodeSamples(framesPerBuffer, audio)
+			audioStream.mx.Unlock()
 			if nSamples == 0 {
 				// done reading audio, close output channel
 				close(audioPacketStream)
@@ -186,24 +212,53 @@ func MusicAudioProducer(ctx context.Context,
 
 			skipPacket := false
 			if startSamplesPos > samplesPos+pct.SamplesCount {
-				samplesPos += pct.SamplesCount
 				skipPacket = true
 			}
 
 			if !skipPacket {
-				audioPacketStream <- pct
+				//audioPacketStream <- pct
+				select {
+				case audioPacketStream <- pct:
+				case <-ctx.Done():
+					fmt.Println("context done in MusicAudioProducer")
+					close(audioPacketStream)
+					return
+				}
+				samplesCnt += pct.SamplesCount
 			}
 
 			samplesPos += pct.SamplesCount
 
+			if outSamplesCnt > 0 && samplesCnt >= outSamplesCnt {
+				close(audioPacketStream)
+				return
+			}
+
 			select {
 			case <-ctx.Done():
+				fmt.Println("context done in MusicAudioProducer")
 				close(audioPacketStream)
 				return
 			default:
 			}
 		}
+		fmt.Println("exit MusicAudioProducer")
 	}(ctx)
 
 	return &audioStream, nil
+}
+
+func (s *fileAudioStream) GetFormat() types.FrameFormat {
+	return s.audioFormat
+}
+
+func (s *fileAudioStream) Stream() <-chan AudioSamplesPacket {
+	return s.stream
+}
+
+func (s *fileAudioStream) Close() error {
+	if s.closeFunc != nil {
+		return s.closeFunc()
+	}
+	return nil
 }

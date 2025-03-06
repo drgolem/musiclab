@@ -86,14 +86,16 @@ func doSamplecutCmd(cmd *cobra.Command, args []string) {
 		fmt.Printf("ERR: %v\n", err)
 		return
 	}
-	defer audioStream.CancelFunc()
+	defer audioStream.Close()
+
+	audioFormat := audioStream.GetFormat()
 
 	fmt.Printf("Samplecut: %s\n", inFileName)
-	fmt.Printf("Channels: %d\n", audioStream.AudioFormat.Channels)
-	fmt.Printf("Input Sample Rate: %d\n", audioStream.AudioFormat.SampleRate)
+	fmt.Printf("Channels: %d\n", audioFormat.Channels)
+	fmt.Printf("Input Sample Rate: %d\n", audioFormat.SampleRate)
 
-	outSamplesCnt := int(dur.Seconds() * float64(audioStream.AudioFormat.SampleRate))
-	startSamplesPos := int(start.Seconds() * float64(audioStream.AudioFormat.SampleRate))
+	outSamplesCnt := int(dur.Seconds() * float64(audioFormat.SampleRate))
+	startSamplesPos := int(start.Seconds() * float64(audioFormat.SampleRate))
 
 	fmt.Printf("in %s\n", inFileName)
 	fmt.Printf("out %s\n", outFileName)
@@ -102,12 +104,12 @@ func doSamplecutCmd(cmd *cobra.Command, args []string) {
 	fmt.Printf("out samples: %d\n", outSamplesCnt)
 
 	// 1 sample - num channels * bits per sample
-	frameByteSize := audioStream.AudioFormat.Channels * audioStream.AudioFormat.BitsPerSample / 8
+	frameByteSize := audioFormat.Channels * audioFormat.BitsPerSample / 8
 
 	audioData := make([]byte, 0)
 	samplesCnt := 0
 	samplesPos := 0
-	for pct := range audioStream.Stream {
+	for pct := range audioStream.Stream() {
 
 		if startSamplesPos > samplesPos+pct.SamplesCount {
 			samplesPos += pct.SamplesCount
@@ -144,9 +146,9 @@ func doSamplecutCmd(cmd *cobra.Command, args []string) {
 
 	wavWriter := wav.NewWriter(fOut,
 		uint32(outSamplesCnt),
-		uint16(audioStream.AudioFormat.Channels),
-		uint32(audioStream.AudioFormat.SampleRate),
-		uint16(audioStream.AudioFormat.BitsPerSample))
+		uint16(audioFormat.Channels),
+		uint32(audioFormat.SampleRate),
+		uint16(audioFormat.BitsPerSample))
 
 	wavWriter.Write(audioData)
 }

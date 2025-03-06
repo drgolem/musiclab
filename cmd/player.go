@@ -91,26 +91,28 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 		fmt.Printf("ERR: %v\n", err)
 		return
 	}
-	defer audioStream.CancelFunc()
+	defer audioStream.Close()
+
+	audioFormat := audioStream.GetFormat()
 
 	fmt.Printf("Encoding: Signed 16bit\n")
-	fmt.Printf("Sample Rate: %d\n", audioStream.AudioFormat.SampleRate)
-	fmt.Printf("Channels: %d\n", audioStream.AudioFormat.Channels)
+	fmt.Printf("Sample Rate: %d\n", audioFormat.SampleRate)
+	fmt.Printf("Channels: %d\n", audioFormat.Channels)
 	deviceIdx := 1
 
 	portaudio.Initialize()
 	defer portaudio.Terminate()
 
-	playFn, consumerCloseFn, err := audiosink.NewPortAudioSink(deviceIdx,
-		framesPerBuffer, audioStream.AudioFormat, audioStream.Stream)
+	sink, err := audiosink.NewPortAudioSink(deviceIdx,
+		framesPerBuffer, audioFormat, audioStream.Stream())
 	if err != nil {
 		fmt.Printf("ERR: %v\n", err)
 		return
 	}
-	defer consumerCloseFn()
+	defer sink.Close(ctx)
 
 	go func() {
-		err := playFn(ctx)
+		err := sink.Play(ctx)
 
 		// notify cancel ctx
 		cancelFn()

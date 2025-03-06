@@ -28,22 +28,24 @@ func AudioSamplesFromFile(ctx context.Context, fileName string) (AudioSamples, e
 	if err != nil {
 		return out, err
 	}
-	defer audioStream.CancelFunc()
+	defer audioStream.Close()
 
-	sampleRate := audioStream.AudioFormat.SampleRate
+	audioFormat := audioStream.GetFormat()
+
+	sampleRate := audioFormat.SampleRate
 
 	inSamplesCnt := 0
 
 	audioData := make([]byte, 0)
 
-	for pct := range audioStream.Stream {
+	for pct := range audioStream.Stream() {
 		inSamplesCnt += pct.SamplesCount
 
 		audioData = append(audioData, pct.Audio[:pct.SamplesCount*4]...)
 	}
 
 	// mix stereo to mono
-	if audioStream.AudioFormat.Channels == 2 {
+	if audioFormat.Channels == 2 {
 		var bufMono bytes.Buffer
 		bufMonoWriter := bufio.NewWriter(&bufMono)
 

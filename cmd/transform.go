@@ -83,19 +83,21 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 		fmt.Printf("ERR: %v\n", err)
 		return
 	}
-	defer audioStream.CancelFunc()
+	defer audioStream.Close()
+
+	audioFormat := audioStream.GetFormat()
 
 	fmt.Printf("Resamping: %s\n", inFileName)
 	fmt.Printf("Encoding: Signed 16bit\n")
-	fmt.Printf("Channels: %d\n", audioStream.AudioFormat.Channels)
-	fmt.Printf("Input Sample Rate: %d\n", audioStream.AudioFormat.SampleRate)
+	fmt.Printf("Channels: %d\n", audioFormat.Channels)
+	fmt.Printf("Input Sample Rate: %d\n", audioFormat.SampleRate)
 	fmt.Printf("Output Sample Rate: %d\n", newSampleRate)
 
 	inSamplesCnt := 0
 
 	audioData := make([]byte, 0)
 
-	for pct := range audioStream.Stream {
+	for pct := range audioStream.Stream() {
 		inSamplesCnt += pct.SamplesCount
 
 		audioData = append(audioData, pct.Audio[:pct.SamplesCount*4]...)
@@ -105,9 +107,9 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 	bufWriter := bufio.NewWriter(&buf)
 
 	res, err := soxr.New(bufWriter,
-		float64(audioStream.AudioFormat.SampleRate),
+		float64(audioFormat.SampleRate),
 		float64(newSampleRate),
-		audioStream.AudioFormat.Channels,
+		audioFormat.Channels,
 		soxr.I16,
 		soxr.HighQ)
 	if err != nil {
@@ -123,13 +125,13 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 	fmt.Printf("%v\n", ns)
 	res.Close()
 
-	outSamplesCnt := buf.Len() / (audioStream.AudioFormat.Channels * audioStream.AudioFormat.BitsPerSample / 8)
+	outSamplesCnt := buf.Len() / (audioFormat.Channels * audioFormat.BitsPerSample / 8)
 
-	outNumChannels := audioStream.AudioFormat.Channels
+	outNumChannels := audioFormat.Channels
 
 	var outputData []byte
 
-	if convertToMono && audioStream.AudioFormat.Channels == 2 {
+	if convertToMono && audioFormat.Channels == 2 {
 		var bufMono bytes.Buffer
 		bufMonoWriter := bufio.NewWriter(&bufMono)
 
@@ -171,7 +173,7 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 		uint32(outSamplesCnt),
 		uint16(outNumChannels),
 		uint32(newSampleRate),
-		uint16(audioStream.AudioFormat.BitsPerSample))
+		uint16(audioFormat.BitsPerSample))
 
 	wavWriter.Write(outputData)
 
