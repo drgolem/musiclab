@@ -16,15 +16,23 @@ type AudioSink interface {
 }
 
 type portAudioSink struct {
-	stream       *portaudio.PaStream
-	audioPctChan <-chan audiosource.AudioSamplesPacket
+	audioFormat     types.FrameFormat
+	deviceIdx       int
+	framesPerBuffer int
+	stream          *portaudio.PaStream
+	audioPctChan    <-chan audiosource.AudioSamplesPacket
 }
 
 func NewPortAudioSink(deviceIdx int,
 	framesPerBuffer int,
-	audioFormat types.FrameFormat,
 	audioPctChan <-chan audiosource.AudioSamplesPacket,
 ) (AudioSink, error) {
+
+	audioFormat := types.FrameFormat{
+		SampleRate: 44100,
+		Channels:   2,
+		//BitsPerSample: 16,
+	}
 
 	sampleformat := portaudio.SampleFmtInt16
 
@@ -49,8 +57,11 @@ func NewPortAudioSink(deviceIdx int,
 	}
 
 	ps := portAudioSink{
-		stream:       stream,
-		audioPctChan: audioPctChan,
+		audioFormat:     audioFormat,
+		deviceIdx:       deviceIdx,
+		framesPerBuffer: framesPerBuffer,
+		stream:          stream,
+		audioPctChan:    audioPctChan,
 	}
 
 	return &ps, nil
@@ -65,6 +76,37 @@ func (ps *portAudioSink) Play(ctx context.Context) error {
 				fmt.Println("PortAudioSink channel closed")
 				return nil
 			}
+
+			if ps.audioFormat != pkt.Format {
+				ps.audioFormat = pkt.Format
+
+				sampleformat := portaudio.SampleFmtInt16
+
+				outStreamParams := portaudio.PaStreamParameters{
+					DeviceIndex:  ps.deviceIdx,
+					ChannelCount: ps.audioFormat.Channels,
+					SampleFormat: sampleformat,
+				}
+				var err error
+				ps.stream, err = portaudio.NewStream(outStreamParams, float32(ps.audioFormat.SampleRate))
+				if err != nil {
+					fmt.Printf("PulseAudio: ERR: %v\n", err)
+					return nil
+				}
+
+				err = ps.stream.Open(ps.framesPerBuffer)
+				if err != nil {
+					fmt.Printf("PulseAudio: ERR: %v\n", err)
+					return nil
+				}
+
+				err = ps.stream.StartStream()
+				if err != nil {
+					fmt.Printf("PulseAudio: ERR: %v\n", err)
+					return nil
+				}
+			}
+
 			err := ps.stream.Write(pkt.SamplesCount, pkt.Audio)
 			if err != nil {
 				// check if context was cancelled

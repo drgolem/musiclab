@@ -104,7 +104,7 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 	defer portaudio.Terminate()
 
 	sink, err := audiosink.NewPortAudioSink(deviceIdx,
-		framesPerBuffer, audioFormat, audioStream.Stream())
+		framesPerBuffer, audioStream.Stream())
 	if err != nil {
 		fmt.Printf("ERR: %v\n", err)
 		return

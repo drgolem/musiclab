@@ -53,7 +53,7 @@ func AudioSamplesFromFile(ctx context.Context, fileName string) (AudioSamples, e
 		idx := 0
 		for idx < len(stereoData) {
 			chSample := [2]int16{}
-			for ch := 0; ch < 2; ch++ {
+			for ch := range 2 {
 				b0 := int16(stereoData[idx])
 				idx++
 				b1 := int16(stereoData[idx])

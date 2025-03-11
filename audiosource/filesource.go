@@ -15,6 +15,7 @@ import (
 )
 
 type AudioSamplesPacket struct {
+	Format       types.FrameFormat
 	Audio        []byte
 	SamplesCount int
 }
@@ -84,8 +85,6 @@ func MusicAudioProducer(ctx context.Context,
 	audioPacketStream := make(chan AudioSamplesPacket, 1)
 
 	audioStream := fileAudioStream{
-		//AudioFormat: audioFormat,
-		//CancelFunc:  closeFn,
 		stream: audioPacketStream,
 	}
 
@@ -206,6 +205,7 @@ func MusicAudioProducer(ctx context.Context,
 			}
 
 			pct := AudioSamplesPacket{
+				Format:       audioFormat,
 				Audio:        audio,
 				SamplesCount: nSamples,
 			}
