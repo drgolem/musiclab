@@ -3,6 +3,7 @@ package audiosource
 import (
 	"context"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sync"
 	"time"
@@ -26,6 +27,8 @@ type musicDecoder interface {
 
 	Open(fileName string) error
 	Close() error
+
+	//io.Seeker
 }
 
 type ProducerOptions struct {
@@ -69,6 +72,8 @@ type fileAudioStream struct {
 
 	decoder musicDecoder
 	mx      sync.Mutex
+
+	seekFunc func(offset int64, whence int) (int64, error)
 }
 
 func MusicAudioProducer(ctx context.Context,
@@ -92,6 +97,7 @@ func MusicAudioProducer(ctx context.Context,
 	fileFormat := types.FileFormatType(ext)
 
 	var closeFn func() error
+	var seekFunc func(offset int64, whence int) (int64, error)
 
 	var decoder musicDecoder
 
@@ -111,6 +117,7 @@ func MusicAudioProducer(ctx context.Context,
 			mp3Decoder.Delete()
 			return nil
 		}
+		seekFunc = mp3Decoder.Seek
 	case types.FileFormat_OGG:
 		streamType, err := decoders.GetOggFileStreamType(fileName)
 		if err != nil {
@@ -147,6 +154,7 @@ func MusicAudioProducer(ctx context.Context,
 			defer audioStream.mx.Unlock()
 			return decoder.Close()
 		}
+		seekFunc = flacDecoder.Seek
 	case types.FileFormat_WAV:
 		wavDecoder, err := decoders.NewWavDecoder()
 		if err != nil {
@@ -180,12 +188,23 @@ func MusicAudioProducer(ctx context.Context,
 	audioStream.audioFormat = audioFormat
 	audioStream.decoder = decoder
 	audioStream.closeFunc = closeFn
+	audioStream.seekFunc = seekFunc
 
 	go func(ctx context.Context) {
 		startSamplesPos := int(opt.Start.Seconds() * float64(audioFormat.SampleRate))
 		outSamplesCnt := int(opt.Duration.Seconds() * float64(audioStream.audioFormat.SampleRate))
 		samplesPos := 0
 		samplesCnt := 0
+
+		if startSamplesPos > 0 && audioStream.seekFunc != nil {
+			_, err := audioStream.seekFunc(int64(startSamplesPos), io.SeekCurrent)
+			if err != nil {
+				fmt.Printf("ERR seek %v\n", err)
+				return
+			}
+			samplesPos = startSamplesPos
+		}
+
 		for {
 			framesPerBuffer := opt.FramesPerBuffer
 			audioBufSize := 4 * numChannels * framesPerBuffer
