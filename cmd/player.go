@@ -95,6 +95,9 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 
 	audioFormat := audioStream.GetFormat()
 
+	stat := audioStream.Status()
+	fmt.Printf("STATUS: %v\n", stat)
+
 	fmt.Printf("Encoding: Signed 16bit\n")
 	fmt.Printf("Sample Rate: %d\n", audioFormat.SampleRate)
 	fmt.Printf("Channels: %d\n", audioFormat.Channels)
@@ -121,6 +124,21 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 			fmt.Printf("ERR playFn: %v\n", err)
 		}
 	}()
+
+	go func(ctx context.Context) {
+		// status reporter
+		ticker := time.NewTicker(2 * time.Second)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				stat := audioStream.Status()
+				fmt.Printf("STATUS: %v\n", stat)
+			}
+		}
+	}(ctx)
 
 	<-ctx.Done()
 	fmt.Printf("done\n")

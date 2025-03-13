@@ -27,8 +27,6 @@ type musicDecoder interface {
 
 	Open(fileName string) error
 	Close() error
-
-	//io.Seeker
 }
 
 type ProducerOptions struct {
@@ -59,21 +57,23 @@ func WithPlayStartPos(start time.Duration) SetOptionsFn {
 
 type AudioStream interface {
 	GetFormat() types.FrameFormat
+	Status() map[string]string
 	Stream() <-chan AudioSamplesPacket
 	Close() error
 }
 
 type fileAudioStream struct {
-	AudioStream
-
 	audioFormat types.FrameFormat
 	stream      <-chan AudioSamplesPacket
-	closeFunc   func() error
 
 	decoder musicDecoder
 	mx      sync.Mutex
 
-	seekFunc func(offset int64, whence int) (int64, error)
+	mxStatus       sync.RWMutex
+	elapsedSamples int
+
+	closeFunc func() error
+	seekFunc  func(offset int64, whence int) (int64, error)
 }
 
 func MusicAudioProducer(ctx context.Context,
@@ -205,6 +205,10 @@ func MusicAudioProducer(ctx context.Context,
 			samplesPos = startSamplesPos
 		}
 
+		audioStream.mxStatus.Lock()
+		audioStream.elapsedSamples = samplesPos
+		audioStream.mxStatus.Unlock()
+
 		for {
 			framesPerBuffer := opt.FramesPerBuffer
 			audioBufSize := 4 * numChannels * framesPerBuffer
@@ -248,6 +252,10 @@ func MusicAudioProducer(ctx context.Context,
 
 			samplesPos += pct.SamplesCount
 
+			audioStream.mxStatus.Lock()
+			audioStream.elapsedSamples = samplesPos
+			audioStream.mxStatus.Unlock()
+
 			if outSamplesCnt > 0 && samplesCnt >= outSamplesCnt {
 				close(audioPacketStream)
 				return
@@ -269,6 +277,31 @@ func MusicAudioProducer(ctx context.Context,
 
 func (s *fileAudioStream) GetFormat() types.FrameFormat {
 	return s.audioFormat
+}
+
+func (s *fileAudioStream) Status() map[string]string {
+	s.mxStatus.RLock()
+	defer s.mxStatus.RUnlock()
+
+	attrs := make(map[string]string)
+
+	attrs["format"] = fmt.Sprintf("%d:%d:%d",
+		s.audioFormat.SampleRate,
+		s.audioFormat.BitsPerSample,
+		s.audioFormat.Channels,
+	)
+
+	attrs["elapsed_samples"] = fmt.Sprintf("%d", s.elapsedSamples)
+
+	elapsed := float64(s.elapsedSamples) / float64(s.audioFormat.SampleRate)
+
+	dur := time.Second * time.Duration(elapsed)
+
+	attrs["elapsed_str"] = dur.String()
+
+	attrs["elapsed"] = fmt.Sprintf("%.6f", elapsed)
+
+	return attrs
 }
 
 func (s *fileAudioStream) Stream() <-chan AudioSamplesPacket {
