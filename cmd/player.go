@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/drgolem/go-portaudio/portaudio"
 	"github.com/spf13/cobra"
 
+	"github.com/drgolem/go-portaudio/portaudio"
 	"github.com/drgolem/musiclab/audiosink"
 	"github.com/drgolem/musiclab/audiosource"
 )
@@ -83,7 +83,7 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 
 	const framesPerBuffer = 2048
 
-	audioStream, err := audiosource.MusicAudioProducer(ctx, fileName,
+	audioStream, err := audiosource.NewMusicAudioProducer(ctx, fileName,
 		audiosource.WithFramesPerBuffer(framesPerBuffer),
 		audiosource.WithPlayStartPos(start),
 		audiosource.WithPlayDuration(dur))

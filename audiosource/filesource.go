@@ -72,11 +72,13 @@ type fileAudioStream struct {
 	mxStatus       sync.RWMutex
 	elapsedSamples int
 
+	done chan bool
+
 	closeFunc func() error
 	seekFunc  func(offset int64, whence int) (int64, error)
 }
 
-func MusicAudioProducer(ctx context.Context,
+func NewMusicAudioProducer(ctx context.Context,
 	fileName string,
 	opts ...SetOptionsFn,
 ) (AudioStream, error) {
@@ -91,6 +93,7 @@ func MusicAudioProducer(ctx context.Context,
 
 	audioStream := fileAudioStream{
 		stream: audioPacketStream,
+		done:   make(chan bool, 1),
 	}
 
 	ext := filepath.Ext(fileName)
@@ -111,8 +114,6 @@ func MusicAudioProducer(ctx context.Context,
 		fmt.Printf("Decoder: %s\n", mp3Decoder.CurrentDecoder())
 		decoder = mp3Decoder
 		closeFn = func() error {
-			audioStream.mx.Lock()
-			defer audioStream.mx.Unlock()
 			decoder.Close()
 			mp3Decoder.Delete()
 			return nil
@@ -139,8 +140,6 @@ func MusicAudioProducer(ctx context.Context,
 			decoder = opusDecoder
 		}
 		closeFn = func() error {
-			audioStream.mx.Lock()
-			defer audioStream.mx.Unlock()
 			return decoder.Close()
 		}
 	case types.FileFormat_FLAC:
@@ -150,8 +149,6 @@ func MusicAudioProducer(ctx context.Context,
 		}
 		decoder = flacDecoder
 		closeFn = func() error {
-			audioStream.mx.Lock()
-			defer audioStream.mx.Unlock()
 			return decoder.Close()
 		}
 		seekFunc = flacDecoder.Seek
@@ -162,8 +159,6 @@ func MusicAudioProducer(ctx context.Context,
 		}
 		decoder = wavDecoder
 		closeFn = func() error {
-			audioStream.mx.Lock()
-			defer audioStream.mx.Unlock()
 			return decoder.Close()
 		}
 	default:
@@ -179,6 +174,9 @@ func MusicAudioProducer(ctx context.Context,
 	}
 
 	sampleRate, numChannels, bitsPerSample := decoder.GetFormat()
+	if bitsPerSample == 24 {
+		bitsPerSample = 16
+	}
 	audioFormat := types.FrameFormat{
 		SampleRate:    sampleRate,
 		Channels:      numChannels,
@@ -214,7 +212,12 @@ func MusicAudioProducer(ctx context.Context,
 			audioBufSize := 4 * numChannels * framesPerBuffer
 			audio := make([]byte, audioBufSize)
 			audioStream.mx.Lock()
-			nSamples, err := decoder.DecodeSamples(framesPerBuffer, audio)
+			if audioStream.decoder == nil {
+				audioStream.mx.Unlock()
+				close(audioPacketStream)
+				break
+			}
+			nSamples, err := audioStream.decoder.DecodeSamples(framesPerBuffer, audio)
 			audioStream.mx.Unlock()
 			if nSamples == 0 {
 				// done reading audio, close output channel
@@ -246,6 +249,9 @@ func MusicAudioProducer(ctx context.Context,
 					fmt.Println("context done in MusicAudioProducer")
 					close(audioPacketStream)
 					return
+				case <-audioStream.done:
+					close(audioPacketStream)
+					return
 				}
 				samplesCnt += pct.SamplesCount
 			}
@@ -264,6 +270,9 @@ func MusicAudioProducer(ctx context.Context,
 			select {
 			case <-ctx.Done():
 				fmt.Println("context done in MusicAudioProducer")
+				close(audioPacketStream)
+				return
+			case <-audioStream.done:
 				close(audioPacketStream)
 				return
 			default:
@@ -309,8 +318,15 @@ func (s *fileAudioStream) Stream() <-chan AudioSamplesPacket {
 }
 
 func (s *fileAudioStream) Close() error {
+	s.mx.Lock()
+	defer s.mx.Unlock()
+
 	if s.closeFunc != nil {
 		return s.closeFunc()
 	}
+
+	s.decoder = nil
+
+	s.done <- true
 	return nil
 }
