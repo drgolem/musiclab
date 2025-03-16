@@ -204,7 +204,7 @@ func NewMusicAudioProducer(ctx context.Context,
 		}
 
 		audioStream.mxStatus.Lock()
-		audioStream.elapsedSamples = samplesPos
+		audioStream.elapsedSamples = samplesCnt
 		audioStream.mxStatus.Unlock()
 
 		for {
@@ -230,9 +230,11 @@ func NewMusicAudioProducer(ctx context.Context,
 				return
 			}
 
+			bytesSize := nSamples * audioFormat.Channels * audioFormat.BitsPerSample / 8
+
 			pct := AudioSamplesPacket{
 				Format:       audioFormat,
-				Audio:        audio,
+				Audio:        audio[:bytesSize],
 				SamplesCount: nSamples,
 			}
 
@@ -259,7 +261,7 @@ func NewMusicAudioProducer(ctx context.Context,
 			samplesPos += pct.SamplesCount
 
 			audioStream.mxStatus.Lock()
-			audioStream.elapsedSamples = samplesPos
+			audioStream.elapsedSamples = samplesCnt
 			audioStream.mxStatus.Unlock()
 
 			if outSamplesCnt > 0 && samplesCnt >= outSamplesCnt {
