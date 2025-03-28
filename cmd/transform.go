@@ -97,16 +97,16 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 
 	audioData := make([]byte, 0)
 
-	for pct := range audioStream.Stream() {
-		inSamplesCnt += pct.SamplesCount
-
-		audioData = append(audioData, pct.Audio[:pct.SamplesCount*4]...)
+	for pkt := range audioStream.Stream() {
+		inSamplesCnt += pkt.SamplesCount
+		audioData = append(audioData, pkt.Audio[:pkt.SamplesCount*4]...)
 	}
 
-	var buf bytes.Buffer
-	bufWriter := bufio.NewWriter(&buf)
+	var bufResampledAudio bytes.Buffer
 
-	res, err := soxr.New(bufWriter,
+	bufWriter := bufio.NewWriter(&bufResampledAudio)
+
+	resampler, err := soxr.New(bufWriter,
 		float64(audioFormat.SampleRate),
 		float64(newSampleRate),
 		audioFormat.Channels,
@@ -117,15 +117,16 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	ns, err := res.Write(audioData)
+	ns, err := resampler.Write(audioData)
 	if err != nil {
 		fmt.Printf("ERR: %v\n", err)
 		return
 	}
 	fmt.Printf("%v\n", ns)
-	res.Close()
+	resampler.Close()
+	bufWriter.Flush()
 
-	outSamplesCnt := buf.Len() / (audioFormat.Channels * audioFormat.BitsPerSample / 8)
+	outSamplesCnt := bufResampledAudio.Len() / (audioFormat.Channels * audioFormat.BitsPerSample / 8)
 
 	outNumChannels := audioFormat.Channels
 
@@ -135,12 +136,12 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 		var bufMono bytes.Buffer
 		bufMonoWriter := bufio.NewWriter(&bufMono)
 
-		stereoData := buf.Bytes()
+		stereoData := bufResampledAudio.Bytes()
 
 		idx := 0
 		for idx < len(stereoData) {
 			chSample := [2]int16{}
-			for ch := 0; ch < 2; ch++ {
+			for ch := range 2 {
 				b0 := int16(stereoData[idx])
 				idx++
 				b1 := int16(stereoData[idx])
@@ -160,7 +161,7 @@ func doResampleCmd(cmd *cobra.Command, args []string) {
 		outputData = bufMono.Bytes()
 		outNumChannels = 1
 	} else {
-		outputData = buf.Bytes()
+		outputData = bufResampledAudio.Bytes()
 	}
 
 	fOut, err := os.OpenFile(outFileName, os.O_WRONLY|os.O_CREATE, 0600)

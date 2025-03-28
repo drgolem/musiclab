@@ -30,9 +30,10 @@ type musicDecoder interface {
 }
 
 type ProducerOptions struct {
-	FramesPerBuffer int
-	Start           time.Duration
-	Duration        time.Duration
+	FramesPerBuffer     int
+	Start               time.Duration
+	Duration            time.Duration
+	ProducerContextData string
 }
 
 type SetOptionsFn func(opt *ProducerOptions)
@@ -52,6 +53,12 @@ func WithPlayDuration(dur time.Duration) SetOptionsFn {
 func WithPlayStartPos(start time.Duration) SetOptionsFn {
 	return func(opt *ProducerOptions) {
 		opt.Start = start
+	}
+}
+
+func WithContextData(data string) SetOptionsFn {
+	return func(opt *ProducerOptions) {
+		opt.ProducerContextData = data
 	}
 }
 
