@@ -139,8 +139,8 @@ func NewMusicAudioProducer(ctx context.Context,
 			}
 			decoder = vorbisDecoder
 		} else if streamType == decoders.StreamType_Opus {
-			//opusDecoder, err := decoders.NewOggOpusDecoder()
-			opusDecoder, err := decoders.NewOggOpusFileDecoder()
+			opusDecoder, err := decoders.NewOggOpusDecoder()
+			//opusDecoder, err := decoders.NewOggOpusFileDecoder()
 			if err != nil {
 				return nil, err
 			}

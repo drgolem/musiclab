@@ -17,7 +17,7 @@ type oggOpusDecoder struct {
 	decoder    *opus.OpusPacketDecoder
 	file       *os.File
 	reader     *bufio.Reader
-	ringBuffer ringbuffer.RingBuffer
+	ringBuffer *ringbuffer.RingBuffer
 	channels   int
 	samplesReq int
 }

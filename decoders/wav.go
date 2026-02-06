@@ -12,7 +12,7 @@ type wavDecoder struct {
 	file   *os.File
 	reader *wav.Reader
 
-	ringBuffer ringbuffer.RingBuffer
+	ringBuffer *ringbuffer.RingBuffer
 	channels   int
 	samplesReq int
 }

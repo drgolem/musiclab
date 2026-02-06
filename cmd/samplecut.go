@@ -1,14 +1,22 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/drgolem/go-opus/opus"
 	"github.com/drgolem/musiclab/audiosource"
+	"github.com/drgolem/musiclab/types"
+	"github.com/pion/rtp"
+	"github.com/pion/rtp/codecs"
+	"github.com/pion/webrtc/v4/pkg/media/oggwriter"
 	"github.com/spf13/cobra"
 	"github.com/youpy/go-wav"
 )
@@ -106,7 +114,7 @@ func doSamplecutCmd(cmd *cobra.Command, args []string) {
 	// 1 sample - num channels * bits per sample
 	frameByteSize := audioFormat.Channels * audioFormat.BitsPerSample / 8
 
-	audioData := make([]byte, 0)
+	var audioData []byte
 	samplesCnt := 0
 	samplesPos := 0
 	for pct := range audioStream.Stream() {
@@ -138,17 +146,96 @@ func doSamplecutCmd(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	fOut, err := os.OpenFile(outFileName, os.O_WRONLY|os.O_CREATE, 0600)
-	if err != nil {
-		panic(err)
+	ext := filepath.Ext(outFileName)
+	fileFormat := types.FileFormatType(ext)
+
+	switch fileFormat {
+	case types.FileFormat_OGG:
+		//fOut, err := os.OpenFile(outFileName, os.O_WRONLY|os.O_CREATE, 0600)
+		//if err != nil {
+		//	panic(err)
+		//}
+		//defer fOut.Close()
+
+		const channels = 2
+		opusEnc, err := opus.NewOpusPacketEncoder(channels)
+		if err != nil {
+			fmt.Printf("error create ogg opus encoder: %v", err)
+			return
+		}
+
+		OpusSampleRate := 48000
+
+		//oggWriter, err := oggwriter.NewWith(fOut, uint32(OpusSampleRate), channels)
+		oggWriter, err := oggwriter.New(outFileName, uint32(OpusSampleRate), channels)
+		if err != nil {
+			fmt.Printf("error create ogg writer: %v", err)
+			return
+		}
+		defer oggWriter.Close()
+
+		pktMaker := rtp.NewPacketizer(
+			1200,
+			uint8(0),
+			uint32(rand.Int31()),
+			&codecs.OpusPayloader{},
+			rtp.NewRandomSequencer(),
+			uint32(OpusSampleRate),
+		)
+
+		br := bytes.NewReader(audioData)
+
+		for {
+			samples := 960
+
+			inSamplesByteSz := samples * 2 * 2
+
+			if br.Len() < inSamplesByteSz {
+				break
+			}
+
+			audio := make([]byte, inSamplesByteSz)
+			_, err := br.Read(audio)
+			if err != nil {
+				fmt.Printf("error read data: %v", err)
+				return
+			}
+
+			packetSz := samples * 2 * 2
+			packet := make([]byte, packetSz)
+			outBytesSz, err := opusEnc.EncodeSamples(packet, samples, audio)
+			if err != nil {
+				fmt.Printf("error encode samples: %v", err)
+				return
+			}
+			packet = packet[:outBytesSz]
+
+			pkts := pktMaker.Packetize(packet, uint32(samples))
+			for _, pkt := range pkts {
+				err = oggWriter.WriteRTP(pkt)
+				if err != nil {
+					fmt.Printf("error write to ogg maker: %v", err)
+					return
+				}
+			}
+		}
+
+	case types.FileFormat_WAV:
+		fOut, err := os.OpenFile(outFileName, os.O_WRONLY|os.O_CREATE, 0600)
+		if err != nil {
+			panic(err)
+		}
+		defer fOut.Close()
+
+		wavWriter := wav.NewWriter(fOut,
+			uint32(outSamplesCnt),
+			uint16(audioFormat.Channels),
+			uint32(audioFormat.SampleRate),
+			uint16(audioFormat.BitsPerSample))
+
+		wavWriter.Write(audioData)
+	default:
+		fmt.Printf("unknown output format: %s\n", outFileName)
 	}
-	defer fOut.Close()
 
-	wavWriter := wav.NewWriter(fOut,
-		uint32(outSamplesCnt),
-		uint16(audioFormat.Channels),
-		uint32(audioFormat.SampleRate),
-		uint16(audioFormat.BitsPerSample))
-
-	wavWriter.Write(audioData)
 }

@@ -7,7 +7,7 @@ import (
 
 type oggOpusFileDecoder struct {
 	decoder    *opus.OpusFileDecoder
-	ringBuffer ringbuffer.RingBuffer
+	ringBuffer *ringbuffer.RingBuffer
 	channels   int
 	samplesReq int
 }
