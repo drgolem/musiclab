@@ -1,11 +1,8 @@
-/*
-Copyright © 2024 NAME HERE <EMAIL ADDRESS>
-*/
 package cmd
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -32,48 +29,70 @@ func init() {
 	playerCmd.Flags().String("file", "", "file to play")
 	playerCmd.Flags().String("start", "0", "start play at specified time")
 	playerCmd.Flags().String("duration", "0", "duration of play (0 - play all)")
+	playerCmd.Flags().Int("device", 1, "audio device index (1 for default)")
+
+	playerCmd.MarkFlagRequired("file")
 }
 
 func doPlayerCmd(cmd *cobra.Command, args []string) {
 	fileName, err := cmd.Flags().GetString("file")
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to get file flag", "error", err)
+		return
+	}
+	if fileName == "" {
+		slog.Error("file argument is required")
 		return
 	}
 	if _, err := os.Stat(fileName); os.IsNotExist(err) {
-		fmt.Printf("path [%s] does not exist\n", fileName)
+		slog.Error("path does not exist", "path", fileName)
 		return
 	}
 
 	startStr, err := cmd.Flags().GetString("start")
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to get start flag", "error", err)
 		return
 	}
 	start, err := time.ParseDuration(startStr)
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("invalid start time", "value", startStr, "error", err)
+		return
+	}
+	if start < 0 {
+		slog.Error("start time cannot be negative", "value", start)
 		return
 	}
 
 	durtStr, err := cmd.Flags().GetString("duration")
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to get duration flag", "error", err)
 		return
 	}
 	dur, err := time.ParseDuration(durtStr)
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("invalid duration", "value", durtStr, "error", err)
+		return
+	}
+	if dur < 0 {
+		slog.Error("duration cannot be negative", "value", dur)
 		return
 	}
 
-	fmt.Printf("Playing: %s\n", fileName)
-	fmt.Printf("Press Ctrl-C to stop.\n")
+	deviceIdx, err := cmd.Flags().GetInt("device")
+	if err != nil {
+		slog.Error("invalid device index", "error", err)
+		return
+	}
+
+	slog.Info("Playing audio file", "file", fileName)
+	slog.Info("Press Ctrl-C to stop")
 
 	ctx, cancelFn := context.WithCancel(context.Background())
 	defer cancelFn()
 
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	var stop context.CancelFunc
+	ctx, stop = signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	const framesPerBuffer = 2048
@@ -83,7 +102,7 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 		audiosource.WithPlayStartPos(start),
 		audiosource.WithPlayDuration(dur))
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to create audio producer", "error", err)
 		return
 	}
 	defer audioStream.Close()
@@ -91,23 +110,26 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 	audioFormat := audioStream.GetFormat()
 
 	stat := audioStream.Status()
-	fmt.Printf("STATUS: %v\n", stat)
+	slog.Info("Audio stream status", "status", stat)
 
-	fmt.Printf("Encoding: Signed 16bit\n")
-	fmt.Printf("Sample Rate: %d\n", audioFormat.SampleRate)
-	fmt.Printf("Channels: %d\n", audioFormat.Channels)
-	deviceIdx := 1
+	slog.Info("Audio format from file",
+		"sample_rate", audioFormat.SampleRate,
+		"channels", audioFormat.Channels,
+		"bits_per_sample", audioFormat.BitsPerSample)
 
-	portaudio.Initialize()
+	if err := portaudio.Initialize(); err != nil {
+		slog.Error("failed to initialize PortAudio", "error", err)
+		return
+	}
 	defer portaudio.Terminate()
 
 	sink, err := audiosink.NewPortAudioSink(deviceIdx,
 		framesPerBuffer, audioStream.Stream())
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to create audio sink", "error", err)
 		return
 	}
-	defer sink.Close(ctx)
+	defer sink.Close(context.Background())
 
 	go func() {
 		err := sink.Play(ctx)
@@ -116,13 +138,14 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 		cancelFn()
 
 		if err != nil {
-			fmt.Printf("ERR playFn: %v\n", err)
+			slog.Error("audio playback failed", "error", err)
 		}
 	}()
 
 	go func(ctx context.Context) {
 		// status reporter
 		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
 
 		for {
 			select {
@@ -130,11 +153,11 @@ func doPlayerCmd(cmd *cobra.Command, args []string) {
 				return
 			case <-ticker.C:
 				stat := audioStream.Status()
-				fmt.Printf("STATUS: %v\n", stat)
+				slog.Info("Audio stream status", "status", stat)
 			}
 		}
 	}(ctx)
 
 	<-ctx.Done()
-	fmt.Printf("done\n")
+	slog.Info("Playback completed")
 }

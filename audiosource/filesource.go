@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/drgolem/go-flac/flac"
@@ -30,10 +32,9 @@ type musicDecoder interface {
 }
 
 type ProducerOptions struct {
-	FramesPerBuffer     int
-	Start               time.Duration
-	Duration            time.Duration
-	ProducerContextData string
+	FramesPerBuffer int
+	Start           time.Duration
+	Duration        time.Duration
 }
 
 type SetOptionsFn func(opt *ProducerOptions)
@@ -56,12 +57,6 @@ func WithPlayStartPos(start time.Duration) SetOptionsFn {
 	}
 }
 
-func WithContextData(data string) SetOptionsFn {
-	return func(opt *ProducerOptions) {
-		opt.ProducerContextData = data
-	}
-}
-
 type AudioStream interface {
 	GetFormat() types.FrameFormat
 	Status() map[string]string
@@ -76,8 +71,7 @@ type fileAudioStream struct {
 	decoder musicDecoder
 	mx      sync.Mutex
 
-	mxStatus       sync.RWMutex
-	elapsedSamples int
+	elapsedSamples atomic.Int64
 
 	done chan bool
 
@@ -118,12 +112,12 @@ func NewMusicAudioProducer(ctx context.Context,
 			return nil, err
 		}
 
-		fmt.Printf("Decoder: %s\n", mp3Decoder.CurrentDecoder())
+		slog.Info("MP3 decoder initialized", "decoder", mp3Decoder.CurrentDecoder())
 		decoder = mp3Decoder
 		closeFn = func() error {
-			decoder.Close()
+			err := decoder.Close()
 			mp3Decoder.Delete()
-			return nil
+			return err
 		}
 		seekFunc = mp3Decoder.Seek
 	case types.FileFormat_OGG:
@@ -131,20 +125,22 @@ func NewMusicAudioProducer(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("file %s, stream type: %v\n", fileName, streamType)
-		if streamType == decoders.StreamType_Vorbis {
+		slog.Info("OGG stream type detected", "file", fileName, "stream_type", streamType)
+		switch streamType {
+		case decoders.StreamType_Vorbis:
 			vorbisDecoder, err := decoders.NewOggVorbisDecoder()
 			if err != nil {
 				return nil, err
 			}
 			decoder = vorbisDecoder
-		} else if streamType == decoders.StreamType_Opus {
+		case decoders.StreamType_Opus:
 			opusDecoder, err := decoders.NewOggOpusDecoder()
-			//opusDecoder, err := decoders.NewOggOpusFileDecoder()
 			if err != nil {
 				return nil, err
 			}
 			decoder = opusDecoder
+		default:
+			return nil, fmt.Errorf("unsupported OGG stream type: %v", streamType)
 		}
 		closeFn = func() error {
 			return decoder.Close()
@@ -172,17 +168,14 @@ func NewMusicAudioProducer(ctx context.Context,
 		return nil, fmt.Errorf("unsupported file format: %s", ext)
 	}
 
-	if decoder == nil {
-		return nil, fmt.Errorf("unknown decoder")
-	}
 	err := decoder.Open(fileName)
 	if err != nil {
 		return nil, err
 	}
 
 	sampleRate, numChannels, bitsPerSample := decoder.GetFormat()
-	if bitsPerSample == 24 {
-		bitsPerSample = 16
+	if bitsPerSample != 16 && bitsPerSample != 8 {
+		return nil, fmt.Errorf("unsupported bit depth: %d (only 8 and 16 bit supported)", bitsPerSample)
 	}
 	audioFormat := types.FrameFormat{
 		SampleRate:    sampleRate,
@@ -197,34 +190,34 @@ func NewMusicAudioProducer(ctx context.Context,
 
 	go func(ctx context.Context) {
 		startSamplesPos := int(opt.Start.Seconds() * float64(audioFormat.SampleRate))
-		outSamplesCnt := int(opt.Duration.Seconds() * float64(audioStream.audioFormat.SampleRate))
+		outSamplesCnt := int(opt.Duration.Seconds() * float64(audioFormat.SampleRate))
 		samplesPos := 0
 		samplesCnt := 0
 
 		if startSamplesPos > 0 && audioStream.seekFunc != nil {
 			_, err := audioStream.seekFunc(int64(startSamplesPos), io.SeekCurrent)
 			if err != nil {
-				fmt.Printf("ERR seek %v\n", err)
+				slog.Error("seek failed", "error", err, "position", startSamplesPos)
+				close(audioPacketStream)
 				return
 			}
 			samplesPos = startSamplesPos
 		}
 
-		audioStream.mxStatus.Lock()
-		audioStream.elapsedSamples = samplesCnt
-		audioStream.mxStatus.Unlock()
+		audioStream.elapsedSamples.Store(int64(samplesCnt))
+
+		// Allocate buffer once for better performance
+		audioBufSize := (bitsPerSample / 8) * numChannels * opt.FramesPerBuffer
+		audio := make([]byte, audioBufSize)
 
 		for {
-			framesPerBuffer := opt.FramesPerBuffer
-			audioBufSize := 4 * numChannels * framesPerBuffer
-			audio := make([]byte, audioBufSize)
 			audioStream.mx.Lock()
 			if audioStream.decoder == nil {
 				audioStream.mx.Unlock()
 				close(audioPacketStream)
 				break
 			}
-			nSamples, err := audioStream.decoder.DecodeSamples(framesPerBuffer, audio)
+			nSamples, err := audioStream.decoder.DecodeSamples(opt.FramesPerBuffer, audio)
 			audioStream.mx.Unlock()
 			if nSamples == 0 {
 				// done reading audio, close output channel
@@ -232,7 +225,7 @@ func NewMusicAudioProducer(ctx context.Context,
 				break
 			}
 			if err != nil {
-				fmt.Printf("ERR: %v\n", err)
+				slog.Error("failed to decode samples", "error", err)
 				close(audioPacketStream)
 				return
 			}
@@ -251,11 +244,10 @@ func NewMusicAudioProducer(ctx context.Context,
 			}
 
 			if !skipPacket {
-				//audioPacketStream <- pct
 				select {
 				case audioPacketStream <- pct:
 				case <-ctx.Done():
-					fmt.Println("context done in MusicAudioProducer")
+					slog.Info("context cancelled in audio producer")
 					close(audioPacketStream)
 					return
 				case <-audioStream.done:
@@ -267,27 +259,14 @@ func NewMusicAudioProducer(ctx context.Context,
 
 			samplesPos += pct.SamplesCount
 
-			audioStream.mxStatus.Lock()
-			audioStream.elapsedSamples = samplesCnt
-			audioStream.mxStatus.Unlock()
+			audioStream.elapsedSamples.Store(int64(samplesCnt))
 
 			if outSamplesCnt > 0 && samplesCnt >= outSamplesCnt {
 				close(audioPacketStream)
 				return
 			}
-
-			select {
-			case <-ctx.Done():
-				fmt.Println("context done in MusicAudioProducer")
-				close(audioPacketStream)
-				return
-			case <-audioStream.done:
-				close(audioPacketStream)
-				return
-			default:
-			}
 		}
-		fmt.Println("exit MusicAudioProducer")
+		slog.Info("audio producer exiting")
 	}(ctx)
 
 	return &audioStream, nil
@@ -298,8 +277,7 @@ func (s *fileAudioStream) GetFormat() types.FrameFormat {
 }
 
 func (s *fileAudioStream) Status() map[string]string {
-	s.mxStatus.RLock()
-	defer s.mxStatus.RUnlock()
+	elapsedSamples := s.elapsedSamples.Load()
 
 	attrs := make(map[string]string)
 
@@ -309,9 +287,9 @@ func (s *fileAudioStream) Status() map[string]string {
 		s.audioFormat.Channels,
 	)
 
-	attrs["elapsed_samples"] = fmt.Sprintf("%d", s.elapsedSamples)
+	attrs["elapsed_samples"] = fmt.Sprintf("%d", elapsedSamples)
 
-	elapsed := float64(s.elapsedSamples) / float64(s.audioFormat.SampleRate)
+	elapsed := float64(elapsedSamples) / float64(s.audioFormat.SampleRate)
 
 	dur := time.Second * time.Duration(elapsed)
 
@@ -328,14 +306,20 @@ func (s *fileAudioStream) Stream() <-chan AudioSamplesPacket {
 
 func (s *fileAudioStream) Close() error {
 	s.mx.Lock()
-	defer s.mx.Unlock()
 
+	var err error
 	if s.closeFunc != nil {
-		return s.closeFunc()
+		err = s.closeFunc()
 	}
 
 	s.decoder = nil
+	s.mx.Unlock()
 
-	s.done <- true
-	return nil
+	// Signal goroutine to stop
+	select {
+	case s.done <- true:
+	default:
+	}
+
+	return err
 }
