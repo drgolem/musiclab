@@ -1,0 +1,64 @@
+# Binaries
+musiclab
+bin/
+
+# Private scores (copyrighted compositions)
+scores_private/
+scores_tabs_private/
+scores_midi_private/
+scores_tabs_orig/
+
+# Test/scratch audio files
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.opus
+
+# Keep example images
+!examples/*.png
+
+# SoundFont files (large, often non-redistributable)
+*.sf2
+
+# Database
+spectr.db/
+
+# Build artifacts
+coverage.out
+coverage.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python / Jupyter
+__pycache__/
+*.pyc
+*.ipynb
+.ipynb_checkpoints/
+*.py
+!tools/*.py
+
+# Scratch images (keep examples/)
+*.png
+
+# Scratch scores/notes at repo root
+/*.csv
+*.score.csv
+
+# Scratch docs
+CHROMAPRINT_SUPPORT.md
+PROJECT_STATE.md
+SHARED_PKG.md
+TODO.md
+
+# Local scripts / test dirs
+init_env
+test_tab2midi/

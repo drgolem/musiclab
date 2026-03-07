@@ -5,15 +5,15 @@ package cmd
 
 import (
 	"cmp"
-	"context"
+
 	"fmt"
-	"log"
-	"math"
+	"log/slog"
 	"math/cmplx"
 	"os"
 	"slices"
 
 	"github.com/drgolem/musiclab/audiosource"
+	"github.com/drgolem/musiclab/dsp"
 
 	"github.com/fale/sit"
 	"github.com/spf13/cobra"
@@ -29,7 +29,7 @@ import (
 // fftCmd represents the spectrogram command
 var fftCmd = &cobra.Command{
 	Use:   "fft",
-	Short: "A brief description of your command",
+	Short: "Analyze dominant frequencies and musical notes in an audio file",
 	Long: `A longer description that spans multiple lines and likely contains examples
 and usage of using your command. For example:
 
@@ -48,18 +48,18 @@ func init() {
 func doFftCmd(cmd *cobra.Command, args []string) {
 	inFileName, err := cmd.Flags().GetString("file")
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to get file flag", "error", err)
 		return
 	}
 	if _, err := os.Stat(inFileName); os.IsNotExist(err) {
-		fmt.Printf("path [%s] does not exist\n", inFileName)
+		slog.Error("path does not exist", "path", inFileName)
 		return
 	}
 
-	ctx := context.Background()
-	audioData, err := audiosource.AudioSamplesFromFile(ctx, inFileName)
+
+	audioData, err := audiosource.AudioSamplesFromFile(inFileName)
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to read audio samples", "error", err)
 		return
 	}
 
@@ -126,7 +126,8 @@ func doFftCmd(cmd *cobra.Command, args []string) {
 		"FFT", pts,
 	)
 	if err != nil {
-		panic(err)
+		slog.Error("failed to add line points", "error", err)
+		return
 	}
 
 	p.Y.Tick.Marker = sit.Ticker{}
@@ -139,7 +140,8 @@ func doFftCmd(cmd *cobra.Command, args []string) {
 
 	// Save the plot to a PNG file.
 	if err := p.Save(6*vg.Inch, 6*vg.Inch, "points.png"); err != nil {
-		panic(err)
+		slog.Error("failed to save plot", "error", err)
+		return
 	}
 
 	freqBin := make(map[int]freqMagn, 0)
@@ -187,7 +189,8 @@ func doFftCmd(cmd *cobra.Command, args []string) {
 	detector := peakdetect.NewPeakDetector()
 	err = detector.Initialize(influence, threshold, data[:lag]) // The length of the initial values is the lag.
 	if err != nil {
-		log.Fatalf("Failed to initialize peak detector.\nError: %s", err)
+		slog.Error("failed to initialize peak detector", "error", err)
+		return
 	}
 
 	spectrNotes := make(map[string]float64)
@@ -217,7 +220,7 @@ func doFftCmd(cmd *cobra.Command, args []string) {
 
 		freq := float64(i+lag) * float64(sampleRate) / (2 * float64(len(spectr)))
 
-		note := freqToNote(freq)
+		note := dsp.FreqToNote(freq)
 		spectrNotes[note] += val
 
 		println(fmt.Sprintf("Data point at index %d (%.2f) has the signal: %s, val: %.4f",
@@ -234,115 +237,19 @@ func doFftCmd(cmd *cobra.Command, args []string) {
 			continue
 		}
 
-		note := freqToNote(freq)
+		note := dsp.FreqToNote(freq)
 		spectrNotes[note] += m
 	}
 	fmt.Printf("%v\n", spectrNotes)
 
 	// collect peak frequency in octave separated bins
 
-	binPeakFreq := octaveBinPeaks(sampleRate, 1.0, spectr)
-	h := peaksHash(binPeakFreq)
+	binPeakFreq := dsp.OctaveBinPeaks(sampleRate, 1.0, spectr)
+	h := dsp.PeaksHash(binPeakFreq)
 
 	fmt.Printf("%v\n", binPeakFreq)
 
 	fmt.Printf("hash: %d\n", h)
 }
 
-func peaksHash(peaks []float64) uint64 {
-	h := uint64(0)
-	p := uint64(1)
-	idx := len(peaks) - 1
-	for idx >= 0 {
-		// round by clearing last bit
-		v := uint64(int64(peaks[idx]) & ^1)
-		h *= 1000
-		h += v
-		p = 1000 * p
-		idx--
-	}
 
-	return h
-}
-
-func octaveBinPeaks(sampleRate int, minAmpl float64, spectr []float64) []float64 {
-	binNotesNames := []string{
-		"C2", "C3", "C4", "C5", "C6", "C8",
-	}
-
-	binNotes := make([]float64, 0)
-
-	for _, nt := range binNotesNames {
-		freq := noteToFrequency(nt)
-		binNotes = append(binNotes, freq)
-	}
-
-	/*
-		for idx, nt := range binNotesNames {
-			fmt.Printf("%s - %.2f\n", nt, binNotes[idx])
-		}
-	*/
-
-	freqToBinIndex := func(freq float64) int {
-		idx := 0
-		for idx < len(binNotes) && binNotes[idx] < freq {
-			idx++
-		}
-		return idx
-	}
-
-	binFreqAmpl := make([]float64, len(binNotes)+1)
-	binPeakFreq := make([]float64, len(binNotes)+1)
-
-	for i, m := range spectr {
-		freq := float64(i) * float64(sampleRate) / (2 * float64(len(spectr)))
-
-		if freq < 30.0 || freq > 5000.0 {
-			continue
-		}
-
-		if m < minAmpl {
-			continue
-		}
-
-		idx := freqToBinIndex(freq)
-		if binFreqAmpl[idx] < m {
-			binFreqAmpl[idx] = m
-			binPeakFreq[idx] = freq
-		}
-	}
-	//fmt.Printf("%v\n", binFreqAmpl)
-	return binPeakFreq
-}
-
-func exampleFft() {
-	const (
-		//mC      = 261.625565 // Hz
-		//mC      = 415.3 // Hz
-		sampleRate = 44100
-		mC         = 440.0 // Hz
-		samples    = sampleRate * 2
-		//samples = 32768
-		Ampl = 0.7
-	)
-	tone := make([]float64, samples)
-	for i := range tone {
-		//tone[i] = Ampl * math.Sin(mC*2*math.Pi*float64(i)/samples)
-		tone[i] = Ampl * math.Sin(mC*2*math.Pi*float64(i)/float64(sampleRate))
-	}
-
-	fft2 := fourier.NewFFT(samples)
-	coeff2 := fft2.Coefficients(nil, tone)
-
-	var maxFreq2, magnitude2, mean2 float64
-	for i, c := range coeff2 {
-		m := cmplx.Abs(c)
-		mean2 += m
-		if m > magnitude2 {
-			magnitude2 = m
-			maxFreq2 = fft2.Freq(i) * float64(sampleRate)
-		}
-	}
-	fmt.Printf("freq=%v Hz, magnitude=%.0f, mean=%.4f\n",
-		maxFreq2, magnitude2, mean2/samples)
-}

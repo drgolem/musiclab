@@ -1,11 +1,9 @@
 package audiosource
 
 import (
-	"bufio"
-	"bytes"
-	"context"
-	"os/signal"
-	"syscall"
+	"fmt"
+
+	"github.com/drgolem/musiclab/internal/decoders"
 )
 
 type AudioSamples struct {
@@ -13,82 +11,70 @@ type AudioSamples struct {
 	SampleRate int
 }
 
-func AudioSamplesFromFile(ctx context.Context, fileName string) (AudioSamples, error) {
+// AudioSamplesFromFile decodes an audio file and returns mono float64 samples.
+// Stereo audio is mixed to mono by averaging channels.
+// Samples are normalized to [-1.0, 1.0] range.
+// Supports 16-bit, 24-bit, and 32-bit audio.
+func AudioSamplesFromFile(fileName string) (AudioSamples, error) {
 	var out AudioSamples
 
-	ctx, cancelFn := context.WithCancel(ctx)
-	defer cancelFn()
-
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	const framesPerBuffer = 2048
-
-	audioStream, err := NewMusicAudioProducer(ctx, fileName, WithFramesPerBuffer(framesPerBuffer))
+	dec, err := decoders.NewDecoder(fileName)
 	if err != nil {
-		return out, err
+		return out, fmt.Errorf("failed to open %s: %w", fileName, err)
 	}
-	defer audioStream.Close()
+	defer dec.Close()
 
-	audioFormat := audioStream.GetFormat()
+	sampleRate, channels, bitsPerSample := dec.GetFormat()
 
-	sampleRate := audioFormat.SampleRate
-
-	inSamplesCnt := 0
-
-	audioData := make([]byte, 0)
-
-	for pct := range audioStream.Stream() {
-		inSamplesCnt += pct.SamplesCount
-
-		audioData = append(audioData, pct.Audio[:pct.SamplesCount*4]...)
+	audioData, _, err := decoders.DecodeAll(dec)
+	if err != nil {
+		return out, fmt.Errorf("failed to decode %s: %w", fileName, err)
 	}
 
-	// mix stereo to mono
-	if audioFormat.Channels == 2 {
-		var bufMono bytes.Buffer
-		bufMonoWriter := bufio.NewWriter(&bufMono)
+	bytesPerSample := bitsPerSample / 8
+	frameSize := channels * bytesPerSample
+	numFrames := len(audioData) / frameSize
 
-		stereoData := audioData
-		idx := 0
-		for idx < len(stereoData) {
-			chSample := [2]int16{}
-			for ch := range 2 {
-				b0 := int16(stereoData[idx])
-				idx++
-				b1 := int16(stereoData[idx])
-				idx++
+	audioSamples := make([]float64, numFrames)
 
-				chSample[ch] = int16((b1 << 8) | b0)
+	for i := 0; i < numFrames; i++ {
+		offset := i * frameSize
+		var monoSum int64
+		for ch := 0; ch < channels; ch++ {
+			sampleOffset := offset + ch*bytesPerSample
+			var sample int32
+			switch bytesPerSample {
+			case 2:
+				sample = int32(int16(audioData[sampleOffset]) | int16(audioData[sampleOffset+1])<<8)
+			case 3:
+				// 24-bit little-endian, sign-extend from 24 to 32 bits
+				sample = int32(audioData[sampleOffset]) | int32(audioData[sampleOffset+1])<<8 | int32(audioData[sampleOffset+2])<<16
+				if sample&0x800000 != 0 {
+					sample |= ^0xFFFFFF // sign extend
+				}
+			case 4:
+				sample = int32(audioData[sampleOffset]) | int32(audioData[sampleOffset+1])<<8 |
+					int32(audioData[sampleOffset+2])<<16 | int32(audioData[sampleOffset+3])<<24
+			default:
+				return out, fmt.Errorf("unsupported bits per sample: %d", bitsPerSample)
 			}
-
-			t := chSample[0]/2 + chSample[1]/2
-
-			bufMonoWriter.WriteByte(byte(t & 0xFF))
-			bufMonoWriter.WriteByte(byte((t >> 8) & 0xFF))
+			monoSum += int64(sample)
 		}
 
-		bufMonoWriter.Flush()
-		audioData = bufMono.Bytes()
-	}
-
-	// convert samles to float
-	audioSamples := make([]float64, 0)
-
-	idx := 0
-	for idx < len(audioData) {
-		b0 := int16(audioData[idx])
-		idx++
-		b1 := int16(audioData[idx])
-		idx++
-		frameInt := int16((b1 << 8) | b0)
-		frame := float64(frameInt) / 0x7FFF
-
-		audioSamples = append(audioSamples, frame)
+		// Average channels and normalize to [-1.0, 1.0]
+		// Chromaprint expects int16 input, so we scale to int16 range
+		mono := monoSum / int64(channels)
+		switch bytesPerSample {
+		case 2:
+			audioSamples[i] = float64(mono) / 32768.0
+		case 3:
+			audioSamples[i] = float64(mono) / 8388608.0 // 2^23
+		case 4:
+			audioSamples[i] = float64(mono) / 2147483648.0 // 2^31
+		}
 	}
 
 	out.Audio = audioSamples
 	out.SampleRate = sampleRate
-
 	return out, nil
 }

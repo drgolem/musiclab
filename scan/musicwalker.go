@@ -3,12 +3,16 @@ package scan
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
+	"sync/atomic"
+	"time"
 
-	"github.com/drgolem/musiclab/types"
+	"github.com/drgolem/audiokit/pkg/types"
 	"github.com/karrick/godirwalk"
 	"golang.org/x/sync/errgroup"
 )
@@ -23,18 +27,31 @@ type CueSheet struct {
 	Ancestors []string
 }
 
+// MusicDocWalker recursively walks a music directory and extracts metadata from audio files.
+// Uses DefaultScanConfig(). For custom configuration, use MusicDocWalkerWithConfig.
 func MusicDocWalker(ctx context.Context,
 	musicRoot string,
 	wgProcess *errgroup.Group,
 	fileTypes ...types.FileFormatType,
 ) (<-chan types.SongDocument, <-chan Folder, <-chan CueSheet, error) {
-	filesChan := make(chan string, MaxConcurrency)
-	foldersChan := make(chan Folder, MaxConcurrency)
-	cuesheetChan := make(chan CueSheet, MaxConcurrency)
+	return MusicDocWalkerWithConfig(ctx, musicRoot, wgProcess, DefaultScanConfig(), fileTypes...)
+}
+
+// MusicDocWalkerWithConfig is like MusicDocWalker but accepts a custom ScanConfig.
+func MusicDocWalkerWithConfig(ctx context.Context,
+	musicRoot string,
+	wgProcess *errgroup.Group,
+	config ScanConfig,
+	fileTypes ...types.FileFormatType,
+) (<-chan types.SongDocument, <-chan Folder, <-chan CueSheet, error) {
+	concurrency := config.MaxConcurrency
+	filesChan := make(chan string, concurrency)
+	foldersChan := make(chan Folder, concurrency)
+	cuesheetChan := make(chan CueSheet, concurrency)
 
 	if len(fileTypes) == 0 {
 		fileTypes = []types.FileFormatType{
-			types.FileFormat_MP3, types.FileFormat_FLAC, types.FileFormat_OGG,
+			types.FileFormatMP3, types.FileFormatFLAC, types.FileFormatOGG, types.FileFormatWAV,
 		}
 	}
 
@@ -43,20 +60,21 @@ func MusicDocWalker(ctx context.Context,
 			err := godirwalk.Walk(musicRoot, &godirwalk.Options{
 				Callback: func(osPathname string, de *godirwalk.Dirent) error {
 					if strings.Contains(osPathname, "@eaDir") {
-						// skip this
 						return filepath.SkipDir
 					}
 
 					if de.IsDir() {
-						dir := osPathname
-						ancestors := strings.Split(dir, "/")
-						// first element - root / - empty string, remove it
-						ancestors = ancestors[1:]
-						ancestors = ancestors[:len(ancestors)-1]
+						if osPathname == musicRoot {
+							return nil
+						}
+
+						ancestors := PathToAncestors(musicRoot, osPathname)
 
 						select {
-						case foldersChan <- Folder{FilePath: dir, Ancestors: ancestors}:
-							// fmt.Printf("POST: %s\n", dir)
+						case foldersChan <- Folder{
+							FilePath:  osPathname,
+							Ancestors: ancestors,
+						}:
 						case <-ctx.Done():
 							return ctx.Err()
 						}
@@ -68,11 +86,20 @@ func MusicDocWalker(ctx context.Context,
 						return nil
 					}
 
+					// Skip hidden files
+					if config.SkipHiddenFiles && strings.HasPrefix(de.Name(), ".") {
+						return nil
+					}
+
 					ext := types.FileFormatType(filepath.Ext(de.Name()))
 
 					reqType := slices.Contains(fileTypes, ext)
 					if reqType {
-						// MP3, FLAC, OGG supported
+						// Quick file size check to skip invalid/tiny files
+						if info, err := os.Stat(osPathname); err == nil && info.Size() < config.MinFileSize {
+							return nil
+						}
+
 						select {
 						case filesChan <- osPathname:
 						case <-ctx.Done():
@@ -80,14 +107,13 @@ func MusicDocWalker(ctx context.Context,
 						}
 					}
 
-					if ext == types.FileFormat_CUE {
+					if ext == types.FileFormatCUE {
 						cueFile := osPathname
-						ancestors := strings.Split(cueFile, "/")
-						// first element - root / - empty string, remove it
-						ancestors = ancestors[1:]
+						ancestors := PathToAncestors(musicRoot, osPathname)
+
 						ch := CueSheet{
 							FilePath:  cueFile,
-							Ancestors: ancestors[:len(ancestors)-1],
+							Ancestors: ancestors,
 						}
 
 						select {
@@ -108,8 +134,7 @@ func MusicDocWalker(ctx context.Context,
 				Unsorted: true,
 			})
 
-			// done dir walk, close all channels
-			fmt.Println("Done file walk")
+			slog.Info("Completed music directory walk")
 			close(filesChan)
 			close(foldersChan)
 			close(cuesheetChan)
@@ -118,18 +143,20 @@ func MusicDocWalker(ctx context.Context,
 		},
 	)
 
-	songsChan := make(chan types.SongDocument, MaxConcurrency)
-
-	var muLibFlac sync.Mutex
-	var muLibOgg sync.Mutex
-	var muLibCue sync.Mutex
-
-	mp3TagDecoder := Mp3TagDecoder{}
+	songsChan := make(chan types.SongDocument, concurrency)
 
 	wgProcess.Go(
 		func() error {
 			wgSubProcess, ctxSub := errgroup.WithContext(ctx)
-			wgSubProcess.SetLimit(MaxConcurrency)
+			wgSubProcess.SetLimit(concurrency)
+
+			// Metrics counters
+			var filesProcessed, mp3Count, flacCount, oggCount, wavCount, cueCount atomic.Int64
+			startTime := time.Now()
+
+			slog.Info("Starting music file processing",
+				"root", musicRoot,
+				"maxConcurrency", concurrency)
 		LOOP:
 			for file := range filesChan {
 				select {
@@ -140,47 +167,43 @@ func MusicDocWalker(ctx context.Context,
 				default:
 				}
 
-				file := file
-
 				ext := types.FileFormatType(filepath.Ext(file))
 				switch ext {
-				case types.FileFormat_MP3:
-					wgSubProcess.Go(func() error {
+				case types.FileFormatMP3, types.FileFormatFLAC, types.FileFormatOGG, types.FileFormatWAV:
+					wgSubProcess.Go(func() (err error) {
+						defer func() {
+							if r := recover(); r != nil {
+								err = fmt.Errorf("panic processing %s: %v", file, r)
+							}
+						}()
 						select {
 						case <-ctxSub.Done():
 							return ctx.Err()
 						default:
 						}
 
-						songInfo, err := mp3TagDecoder.Decode(file)
-						if err != nil {
-							return err
-						}
-						if songInfo != nil {
-							sd := ToSongDocument(songInfo)
-							select {
-							case songsChan <- sd:
-							case <-ctxSub.Done():
-								return ctx.Err()
-							}
-						}
-						return nil
-					})
-
-				case types.FileFormat_FLAC:
-					wgSubProcess.Go(func() error {
-						muLibFlac.Lock()
-						defer muLibFlac.Unlock()
-
-						tagDecoder := FlacTagDecoder{}
+						tagDecoder := UnifiedTagDecoder{}
 						songInfo, err := tagDecoder.Decode(file)
 						if err != nil {
+							slog.Error("Failed to decode file",
+								"file", file, "error", err)
 							return err
 						}
 						if songInfo != nil {
-							sd := ToSongDocument(songInfo)
+							sd := ToSongDocument(musicRoot, songInfo)
 							select {
 							case songsChan <- sd:
+								filesProcessed.Add(1)
+								switch ext {
+								case types.FileFormatMP3:
+									mp3Count.Add(1)
+								case types.FileFormatFLAC:
+									flacCount.Add(1)
+								case types.FileFormatOGG:
+									oggCount.Add(1)
+								case types.FileFormatWAV:
+									wavCount.Add(1)
+								}
 							case <-ctxSub.Done():
 								return ctx.Err()
 							}
@@ -188,92 +211,67 @@ func MusicDocWalker(ctx context.Context,
 						return nil
 					})
 
-				case types.FileFormat_OGG:
-					wgSubProcess.Go(func() error {
-						muLibOgg.Lock()
-						defer muLibOgg.Unlock()
-
-						tagDecoder := OggTagDecoder{}
-						songInfo, err := tagDecoder.Decode(file)
-						if err != nil {
-							return err
-						}
-						if songInfo != nil {
-							sd := ToSongDocument(songInfo)
-							select {
-							case songsChan <- sd:
-							case <-ctxSub.Done():
-								return ctx.Err()
+				case types.FileFormatCUE:
+					wgSubProcess.Go(func() (err error) {
+						defer func() {
+							if r := recover(); r != nil {
+								err = fmt.Errorf("panic processing CUE %s: %v", file, r)
 							}
-						}
-						return nil
-					})
-
-				case types.FileFormat_WAV:
-					wgSubProcess.Go(func() error {
-						// TODO: process wav
-						songInfo := &types.SongInfo{
-							FilePath: file,
-						}
-						sd := ToSongDocument(songInfo)
-						select {
-						case songsChan <- sd:
-						case <-ctxSub.Done():
-							return ctx.Err()
-						}
-						return nil
-					})
-
-				case types.FileFormat_CUE:
-					wgSubProcess.Go(func() error {
-						muLibCue.Lock()
-						defer muLibCue.Unlock()
-						muLibFlac.Lock()
-						defer muLibFlac.Unlock()
-
+						}()
 						tagDecoder := CueTrackDecoder{}
 						tracks, err := tagDecoder.Decode(file)
 						if err != nil {
+							slog.Error("Failed to decode CUE file",
+								"file", file, "error", err)
 							return err
 						}
 						for _, songInfo := range tracks {
-							//parent := ""
-							dir := file
-							ancestors := strings.Split(dir, "/")
-							// first element - root / - empty string, remove it
-							ancestors = ancestors[1:]
-							//if len(ancestors) > 0 {
-							//	parent = ancestors[len(ancestors)-1]
-							//}
+							ancestors := PathToAncestors(musicRoot, file)
+
+							cueBaseFile := path.Base(file)
+							ancestors = append(ancestors, cueBaseFile)
 
 							si := songInfo
+							si.FilePath = types.ToRelativePath(musicRoot, si.FilePath)
 							sd := types.SongDocument{
-								Type: types.DocTypeSong,
-								Song: &si,
-								//Folder: dir,
-								//Parent:    parent,
+								Type:      types.DocTypeSong,
+								Song:      &si,
 								Ancestors: ancestors,
 							}
 
 							select {
 							case songsChan <- sd:
+								filesProcessed.Add(1)
 							case <-ctxSub.Done():
 								return ctx.Err()
 							}
-							// fmt.Printf("CUE TRACK: %#v\n", sd)
-							// fmt.Printf("CUE TRACK: %s\n", sd.Song.Title)
+						}
+						if len(tracks) > 0 {
+							cueCount.Add(1)
 						}
 						return nil
 					})
 
 				default:
-					fmt.Printf("unknown file type: %v\n", ext)
+					slog.Warn("unknown file type", "ext", ext, "file", file)
 				}
 			}
 
 			err := wgSubProcess.Wait()
 
 			close(songsChan)
+
+			// Log processing statistics
+			duration := time.Since(startTime)
+			slog.Info("Completed music file processing",
+				"totalFiles", filesProcessed.Load(),
+				"mp3Files", mp3Count.Load(),
+				"flacFiles", flacCount.Load(),
+				"oggFiles", oggCount.Load(),
+				"wavFiles", wavCount.Load(),
+				"cueSheets", cueCount.Load(),
+				"duration", duration.Round(time.Millisecond).String(),
+				"filesPerSecond", fmt.Sprintf("%.1f", float64(filesProcessed.Load())/duration.Seconds()))
 
 			return err
 		})

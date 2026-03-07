@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/drgolem/musiclab/dsp"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -25,7 +26,7 @@ func Test_noteToFreq(t *testing.T) {
 	}
 
 	for _, td := range testData {
-		assert.InDeltaf(t, td.ExpFreq, noteToFrequency(td.Note), 0.01, td.Note)
+		assert.InDeltaf(t, td.ExpFreq, dsp.NoteToFrequency(td.Note), 0.01, td.Note)
 	}
 }
 
@@ -62,7 +63,7 @@ func Test_noteToFreq_octave4_12(t *testing.T) {
 	}
 
 	for _, td := range testData {
-		assert.InDeltaf(t, td.ExpFreq, noteToFrequency(td.Note), 0.01, td.Note)
+		assert.InDeltaf(t, td.ExpFreq, dsp.NoteToFrequency(td.Note), 0.01, td.Note)
 	}
 }
 
@@ -101,7 +102,7 @@ func Test_noteToFreq_octave4_12min(t *testing.T) {
 	min := math.MaxFloat64
 	prev := float64(0)
 	for idx, td := range testData {
-		freq := noteToFrequency(td.Note)
+		freq := dsp.NoteToFrequency(td.Note)
 		assert.InDeltaf(t, td.ExpFreq, freq, 0.01, td.Note)
 
 		if idx >= 1 && freq != prev {

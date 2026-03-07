@@ -4,9 +4,8 @@ Copyright © 2024 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"os"
 
@@ -23,7 +22,7 @@ import (
 // chromagramCmd represents the chromagram command
 var chromagramCmd = &cobra.Command{
 	Use:   "chromagram",
-	Short: "A brief description of your command",
+	Short: "Generate a chromagram heat map from an audio file",
 	Long: `A longer description that spans multiple lines and likely contains examples
 and usage of using your command. For example:
 
@@ -48,24 +47,24 @@ type noteInterval struct {
 func doChromagramCmd(cmd *cobra.Command, args []string) {
 	inFileName, err := cmd.Flags().GetString("file")
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to get file flag", "error", err)
 		return
 	}
 	if _, err := os.Stat(inFileName); os.IsNotExist(err) {
-		fmt.Printf("path [%s] does not exist\n", inFileName)
+		slog.Error("path does not exist", "path", inFileName)
 		return
 	}
 
 	fileNameBase := filenameWithoutExtension(inFileName)
 
-	ctx := context.Background()
-	audioData, err := audiosource.AudioSamplesFromFile(ctx, inFileName)
+
+	audioData, err := audiosource.AudioSamplesFromFile(inFileName)
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to read audio samples", "error", err)
 		return
 	}
 
-	fmt.Printf("Spectrogram: %s\n", inFileName)
+	fmt.Printf("Chromagram: %s\n", inFileName)
 	fmt.Printf("Encoding: Signed 16bit\n")
 	fmt.Printf("Sample Rate: %d\n", audioData.SampleRate)
 
@@ -97,7 +96,7 @@ func doChromagramCmd(cmd *cobra.Command, args []string) {
 			if math.Abs(freq) < 0.1 {
 				continue
 			}
-			note := freqToNote(freq)
+			note := dsp.FreqToNote(freq)
 			freqMap[note] += sf
 		}
 		if len(freqMap) == 0 {
@@ -255,11 +254,14 @@ func doChromagramCmd(cmd *cobra.Command, args []string) {
 
 	w, err := os.Create(fileNameBase + ".chroma.png")
 	if err != nil {
-		log.Panic(err)
+		slog.Error("failed to create file", "error", err)
+		return
 	}
+	defer w.Close()
 	png := vgimg.PngCanvas{Canvas: img}
 	if _, err = png.WriteTo(w); err != nil {
-		log.Panic(err)
+		slog.Error("failed to write PNG", "error", err)
+		return
 	}
 }
 
@@ -289,62 +291,6 @@ func getMaxNote(mp map[string]float64) string {
 		}
 	}
 	return note
-}
-
-func freqToNote(freq float64) string {
-
-	if freq < 1.0 {
-		return ""
-	}
-
-	notes := []string{"B3", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B", "C5"}
-
-	c4 := noteToFrequency("C4")
-	b4 := noteToFrequency("B4")
-
-	prec := 15.55
-
-	for {
-		if freq <= b4+prec {
-			break
-		}
-		freq = freq / 2
-	}
-
-	for {
-		if freq >= c4-prec {
-			break
-		}
-		freq = freq * 2
-	}
-
-	prec /= 2
-	idx := 0
-	for idx < len(notes)-1 {
-		nl := noteToFrequency(notes[idx])
-		nr := noteToFrequency(notes[idx+1])
-		if freq >= nl && freq < nr {
-			diff := math.Abs(nr-nl) / 2
-			if freq < nl+diff {
-				return notes[idx]
-			} else {
-				return notes[idx+1]
-			}
-			/*
-				closeL := math.Abs(freq - nl)
-				closeR := math.Abs(freq - nr)
-
-				if closeL < closeR {
-					return notes[idx]
-				} else {
-					return notes[idx+1]
-				}
-			*/
-		}
-		idx++
-	}
-
-	return "C4"
 }
 
 type chromaData struct {

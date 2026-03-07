@@ -5,10 +5,9 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"image/color"
-	"log"
+	"log/slog"
 	"math"
 	"os"
 	"path"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"gonum.org/v1/plot"
+	"gonum.org/v1/plot/palette"
 	"gonum.org/v1/plot/palette/moreland"
 	"gonum.org/v1/plot/plotter"
 	"gonum.org/v1/plot/vg"
@@ -31,7 +31,7 @@ import (
 // spectrogramCmd represents the spectrogram command
 var spectrogramCmd = &cobra.Command{
 	Use:   "spectrogram",
-	Short: "A brief description of your command",
+	Short: "Generate a spectrogram heat map with peak frequencies",
 	Long: `A longer description that spans multiple lines and likely contains examples
 and usage of using your command. For example:
 
@@ -50,20 +50,20 @@ func init() {
 func doSpectrogramCmd(cmd *cobra.Command, args []string) {
 	inFileName, err := cmd.Flags().GetString("file")
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to get file flag", "error", err)
 		return
 	}
 	if _, err := os.Stat(inFileName); os.IsNotExist(err) {
-		fmt.Printf("path [%s] does not exist\n", inFileName)
+		slog.Error("path does not exist", "path", inFileName)
 		return
 	}
 
 	fileNameBase := filenameWithoutExtension(inFileName)
 
-	ctx := context.Background()
-	audioData, err := audiosource.AudioSamplesFromFile(ctx, inFileName)
+
+	audioData, err := audiosource.AudioSamplesFromFile(inFileName)
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to read audio samples", "error", err)
 		return
 	}
 
@@ -101,11 +101,11 @@ func doSpectrogramCmd(cmd *cobra.Command, args []string) {
 
 	t1 := time.Now()
 	for idx, sl := range spectrogram {
-		peaks := octaveBinPeaks(sampleRate, 1.0, sl)
+		peaks := dsp.OctaveBinPeaks(sampleRate, 1.0, sl)
 		//fmt.Printf("%d - %v\n", idx, peaks)
 		timeFreqPeaks = append(timeFreqPeaks, peaks)
 
-		h := peaksHash(peaks)
+		h := dsp.PeaksHash(peaks)
 		timePt := time.Duration(idx*frameShift*1000/sampleRate) * time.Millisecond
 		fmt.Printf("%d [%v] - %d\n", idx, timePt, h)
 	}
@@ -124,58 +124,54 @@ func plotSpectrogram(fileName string, sampleRate int,
 		sampleRate: sampleRate,
 	}
 
-	//pal := palette.Heat(12, 1)
-	//pal := moreland.SmoothBlueRed().Palette(255)
 	pal := moreland.SmoothBlueRed().Palette(32)
-	//pal := palette.Heat(100, 1)
 	h := plotter.NewHeatMap(&hd, pal)
-
 	h.Rasterized = true
 
+	pts := buildPeakScatterPoints(timeFreqPeaks)
+
+	p := plot.New()
+	p.Title.Text = "Heat map"
+	p.Add(h)
+
+	s, err := plotter.NewScatter(pts)
+	if err != nil {
+		slog.Error("failed to create scatter plot", "error", err)
+		return
+	}
+	s.GlyphStyle.Color = color.RGBA{R: 255, G: 215, B: 0, A: 255}
+	s.GlyphStyle.Shape = draw.CrossGlyph{}
+	s.GlyphStyle.Radius = 5
+	p.Add(s)
+
+	l := buildHeatMapLegend(pal, h)
+
+	p.X.Padding = 0
+	p.Y.Padding = 0
+
+	maxFreq := getMaxFreq(spectrogram, sampleRate)
+	p.Y.Max = maxFreq + 100.0
+
+	savePlotToPNG(fileName, p, l)
+}
+
+func buildPeakScatterPoints(timeFreqPeaks [][]float64) plotter.XYs {
 	pts := make(plotter.XYs, 0)
 	for i, peaks := range timeFreqPeaks {
-
 		if i%10 != 0 {
 			continue
 		}
-
 		for _, p := range peaks {
 			if p == 0.0 {
 				continue
 			}
-			pt := plotter.XY{
-				X: float64(i),
-				Y: p,
-			}
-			pts = append(pts, pt)
+			pts = append(pts, plotter.XY{X: float64(i), Y: p})
 		}
 	}
+	return pts
+}
 
-	p := plot.New()
-	p.Title.Text = "Heat map"
-
-	p.Add(h)
-
-	/*
-		err := plotutil.AddScatters(p,
-			pts,
-		)
-		if err != nil {
-			panic(err)
-		}
-	*/
-
-	s, err := plotter.NewScatter(pts)
-	if err != nil {
-		panic(err)
-	}
-	s.GlyphStyle.Color = color.RGBA{R: 255, G: 215, B: 0, A: 255}
-	s.GlyphStyle.Shape = draw.CrossGlyph{}
-	//s.GlyphStyle.Shape = draw.CircleGlyph{}
-	s.GlyphStyle.Radius = 5
-	p.Add(s)
-
-	// Create a legend.
+func buildHeatMapLegend(pal palette.Palette, h *plotter.HeatMap) plot.Legend {
 	l := plot.NewLegend()
 	thumbs := plotter.PaletteThumbnailers(pal)
 	for i := len(thumbs) - 1; i >= 0; i-- {
@@ -193,38 +189,32 @@ func plotSpectrogram(fileName string, sampleRate int,
 		}
 		l.Add(fmt.Sprintf("%.2f", val), t)
 	}
+	return l
+}
 
-	p.X.Padding = 0
-	p.Y.Padding = 0
-	//p.X.Max = 1.5
-	//p.Y.Max = 1.5
-
-	maxFreq := getMaxFreq(spectrogram, sampleRate)
-
-	p.Y.Max = maxFreq + 100.0
-	//p.Y.Max = 8000.0
-	//p.Y.Max = 1000.0
-
+func savePlotToPNG(fileName string, p *plot.Plot, l plot.Legend) {
 	img := vgimg.New(500, 500)
 	dc := draw.New(img)
 	l.Top = true
-	// Calculate the width of the legend.
 	r := l.Rectangle(dc)
 	legendWidth := r.Max.X - r.Min.X
-	l.YOffs = -p.Title.TextStyle.FontExtents().Height // Adjust the legend down a little.
+	l.YOffs = -p.Title.TextStyle.FontExtents().Height
 
 	l.Draw(dc)
-	dc = draw.Crop(dc, 0, -legendWidth-vg.Millimeter, 0, 0) // Make space for the legend.
+	dc = draw.Crop(dc, 0, -legendWidth-vg.Millimeter, 0, 0)
 
 	p.Draw(dc)
 
 	w, err := os.Create(fileName)
 	if err != nil {
-		log.Panic(err)
+		slog.Error("failed to create file", "error", err)
+		return
 	}
+	defer w.Close()
 	png := vgimg.PngCanvas{Canvas: img}
 	if _, err = png.WriteTo(w); err != nil {
-		log.Panic(err)
+		slog.Error("failed to write PNG", "error", err)
+		return
 	}
 }
 

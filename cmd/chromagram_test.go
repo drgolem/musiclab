@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/drgolem/musiclab/dsp"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -49,7 +50,7 @@ func Test_ChromaClose(t *testing.T) {
 	}
 
 	for _, td := range testData {
-		assert.Equal(t, td.ExpNote, freqToNote(td.Freq),
+		assert.Equal(t, td.ExpNote, dsp.FreqToNote(td.Freq),
 			fmt.Sprintf("expect %0.2f => %s", td.Freq, td.ExpNote))
 	}
 }

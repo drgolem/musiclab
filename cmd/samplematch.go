@@ -5,14 +5,15 @@ package cmd
 
 import (
 	"cmp"
-	"context"
 	"encoding/binary"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"os"
 	"slices"
 	"time"
+
+	"github.com/drgolem/musiclab/dsp"
 
 	badger "github.com/dgraph-io/badger/v4"
 	"github.com/spf13/cobra"
@@ -21,7 +22,7 @@ import (
 // samplematchCmd represents the samplematch command
 var samplematchCmd = &cobra.Command{
 	Use:   "samplematch",
-	Short: "A brief description of your command",
+	Short: "Find where a sample occurs in a reference audio file",
 	Long: `A longer description that spans multiple lines and likely contains examples
 and usage of using your command. For example:
 
@@ -40,30 +41,29 @@ func init() {
 }
 
 func doSamplematchCmd(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
 
 	refFile, err := cmd.Flags().GetString("in")
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to get in flag", "error", err)
 		return
 	}
 	if _, err := os.Stat(refFile); os.IsNotExist(err) {
-		fmt.Printf("path [%s] does not exist\n", refFile)
+		slog.Error("path does not exist", "path", refFile)
 		return
 	}
 	smplFile, err := cmd.Flags().GetString("sample")
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to get sample flag", "error", err)
 		return
 	}
 	if _, err := os.Stat(smplFile); os.IsNotExist(err) {
-		fmt.Printf("path [%s] does not exist\n", smplFile)
+		slog.Error("path does not exist", "path", smplFile)
 		return
 	}
 
 	useDb, err := cmd.Flags().GetBool("db")
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to get db flag", "error", err)
 		return
 	}
 
@@ -79,7 +79,8 @@ func doSamplematchCmd(cmd *cobra.Command, args []string) {
 		opts.Logger = nil
 		db, err := badger.Open(opts)
 		if err != nil {
-			log.Fatal(err)
+			slog.Error("failed to open database", "error", err)
+			return
 		}
 		defer db.Close()
 
@@ -95,7 +96,10 @@ func doSamplematchCmd(cmd *cobra.Command, args []string) {
 				err := item.Value(func(v []byte) error {
 					//fmt.Printf("key=%s, value=%s\n", k, v)
 					hash := binary.LittleEndian.Uint64(k[4:])
-					sl := arrSongLocatorsFromBytes(v)
+						sl, err := arrSongLocatorsFromBytes(v)
+					if err != nil {
+						return err
+					}
 
 					refSongHashes[hash] = sl
 					return nil
@@ -107,7 +111,8 @@ func doSamplematchCmd(cmd *cobra.Command, args []string) {
 			return nil
 		})
 		if err != nil {
-			log.Fatalf("ERR: %v", err)
+			slog.Error("failed to read hashes from database", "error", err)
+			return
 		}
 
 		err = db.View(func(txn *badger.Txn) error {
@@ -134,17 +139,18 @@ func doSamplematchCmd(cmd *cobra.Command, args []string) {
 			return nil
 		})
 		if err != nil {
-			log.Fatalf("ERR: %v", err)
+			slog.Error("failed to read songs from database", "error", err)
+			return
 		}
 
 	} else {
-		refFileSampleRate, refFileSpectr := getFileSpectrogram(ctx, refFile, frameShift, frameSamples)
+		refFileSampleRate, refFileSpectr := getFileSpectrogram(refFile, frameShift, frameSamples)
 
 		refSongIdx := int64(0)
 		refSongHashes = spectrToSongHashes(refFileSampleRate, frameShift, refSongIdx, refFileSpectr)
 	}
 
-	smplFileSampleRate, smplFileSpectr := getFileSpectrogram(ctx, smplFile, frameShift, frameSamples)
+	smplFileSampleRate, smplFileSpectr := getFileSpectrogram(smplFile, frameShift, frameSamples)
 
 	smplSongIdx := int64(1)
 	smplSongLocators := spectrToSongLocators(smplFileSampleRate, frameShift, smplSongIdx, smplFileSpectr)
@@ -239,9 +245,9 @@ func spectrToSongHashes(sampleRate int, frameShift int, songIdx int64, spectrogr
 	songHashes := make(map[uint64][]SongHashLocator)
 
 	for idx, sl := range spectrogram {
-		peaks := octaveBinPeaks(sampleRate, 1.0, sl)
+		peaks := dsp.OctaveBinPeaks(sampleRate, 1.0, sl)
 
-		h := peaksHash(peaks)
+		h := dsp.PeaksHash(peaks)
 		if h == 0 {
 			continue
 		}
@@ -274,9 +280,9 @@ func spectrToSongLocators(sampleRate int, frameShift int, songIdx int64, spectro
 	songLocators := make([]SongHashLocator, 0)
 
 	for idx, sl := range spectrogram {
-		peaks := octaveBinPeaks(sampleRate, 1.0, sl)
+		peaks := dsp.OctaveBinPeaks(sampleRate, 1.0, sl)
 
-		h := peaksHash(peaks)
+		h := dsp.PeaksHash(peaks)
 		if h == 0 {
 			continue
 		}

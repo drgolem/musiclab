@@ -8,7 +8,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path"
 	"sync"
@@ -22,13 +22,13 @@ import (
 	"github.com/drgolem/musiclab/audiosource"
 	"github.com/drgolem/musiclab/dsp"
 	"github.com/drgolem/musiclab/scan"
-	"github.com/drgolem/musiclab/types"
+	"github.com/drgolem/audiokit/pkg/types"
 )
 
 // dbCmd represents the db command
 var dbCmd = &cobra.Command{
 	Use:   "db",
-	Short: "A brief description of your command",
+	Short: "Build a spectral hash database from a music folder",
 	Long: `A longer description that spans multiple lines and likely contains examples
 and usage of using your command. For example:
 
@@ -63,23 +63,23 @@ func init() {
 func doDatabaseCmd(cmd *cobra.Command, args []string) {
 	musicRoot, err := cmd.Flags().GetString("music-root")
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to get music-root flag", "error", err)
 		return
 	}
 	if _, err := os.Stat(musicRoot); os.IsNotExist(err) {
-		fmt.Printf("path [%s] does not exist\n", musicRoot)
+		slog.Error("path does not exist", "path", musicRoot)
 		return
 	}
 
 	musicDb, err := cmd.Flags().GetString("db")
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to get db flag", "error", err)
 		return
 	}
 
 	doDbScan, err := cmd.Flags().GetBool("scan")
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to get scan flag", "error", err)
 		return
 	}
 
@@ -98,25 +98,45 @@ func scanMusic(musicRoot string, musicDb string) {
 	wgProcess.SetLimit(scan.MaxConcurrency)
 
 	musicFileTypes := []types.FileFormatType{
-		types.FileFormat_MP3,
-		types.FileFormat_FLAC,
-		types.FileFormat_OGG,
-		types.FileFormat_WAV,
+		types.FileFormatMP3,
+		types.FileFormatFLAC,
+		types.FileFormatOGG,
+		types.FileFormatWAV,
 	}
 
 	songsChan, foldersChan, cuesheetChan, err := scan.MusicDocWalker(ctx, musicRoot,
 		wgProcess, musicFileTypes...)
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to walk music directory", "error", err)
 		return
 	}
 
-	songDocChan := make(chan types.SongDocument, scan.MaxConcurrency)
+	songDocChan := fanInSongDocuments(ctx, wgProcess, songsChan, foldersChan, cuesheetChan)
 
+	mrd := types.SongDocument{
+		Type:       types.DocTypeMusicRoot,
+		FolderName: musicRoot,
+	}
+	songDocChan <- mrd
+
+	processSongs(ctx, musicDb, songDocChan)
+}
+
+func fanInSongDocuments(ctx context.Context, wgProcess *errgroup.Group,
+	songsChan <-chan types.SongDocument,
+	foldersChan <-chan scan.Folder,
+	cuesheetChan <-chan scan.CueSheet,
+) chan types.SongDocument {
+	songDocChan := make(chan types.SongDocument, scan.MaxConcurrency)
 	var wgSubProcess sync.WaitGroup
 
 	wgSubProcess.Add(1)
-	wgProcess.Go(func() error {
+	wgProcess.Go(func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic in songs goroutine: %v", r)
+			}
+		}()
 		defer wgSubProcess.Done()
 		for sd := range songsChan {
 			select {
@@ -124,14 +144,18 @@ func scanMusic(musicRoot string, musicDb string) {
 				return ctx.Err()
 			default:
 			}
-
 			songDocChan <- sd
 		}
 		return nil
 	})
 
 	wgSubProcess.Add(1)
-	wgProcess.Go(func() error {
+	wgProcess.Go(func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic in folders goroutine: %v", r)
+			}
+		}()
 		defer wgSubProcess.Done()
 		for folder := range foldersChan {
 			select {
@@ -145,14 +169,18 @@ func scanMusic(musicRoot string, musicDb string) {
 				FolderName: folderName,
 				Ancestors:  folder.Ancestors,
 			}
-			//songDocs = append(songDocs, sd)
 			songDocChan <- sd
 		}
 		return nil
 	})
 
 	wgSubProcess.Add(1)
-	wgProcess.Go(func() error {
+	wgProcess.Go(func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic in cuesheet goroutine: %v", r)
+			}
+		}()
 		defer wgSubProcess.Done()
 		for ch := range cuesheetChan {
 			select {
@@ -160,7 +188,6 @@ func scanMusic(musicRoot string, musicDb string) {
 				return ctx.Err()
 			default:
 			}
-
 			ancestors := ch.Ancestors
 			folderName := path.Base(ch.FilePath)
 			sd := types.SongDocument{
@@ -168,29 +195,18 @@ func scanMusic(musicRoot string, musicDb string) {
 				FolderName: folderName,
 				Ancestors:  ancestors,
 			}
-
-			//songDocs = append(songDocs, sd)
 			songDocChan <- sd
 		}
 		return nil
 	})
 
 	wgProcess.Go(func() error {
-		// wait for all subprocess finish
-		// and close output channel
 		wgSubProcess.Wait()
 		close(songDocChan)
 		return nil
 	})
 
-	mrd := types.SongDocument{
-		Type:       types.DocTypeMusicRoot,
-		FolderName: musicRoot,
-	}
-	//songDocs = append(songDocs, mrd)
-	songDocChan <- mrd
-
-	processSongs(ctx, musicDb, songDocChan)
+	return songDocChan
 }
 
 func processSongs(ctx context.Context, musicDb string, songDocChan <-chan types.SongDocument) {
@@ -203,7 +219,8 @@ func processSongs(ctx context.Context, musicDb string, songDocChan <-chan types.
 	opts.Logger = nil
 	db, err := badger.Open(opts)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("failed to open database", "error", err)
+		return
 	}
 	defer db.Close()
 
@@ -233,8 +250,13 @@ func processSongs(ctx context.Context, musicDb string, songDocChan <-chan types.
 
 		idx := songIdx
 		wgProcess.Go(
-			func() error {
-				fileSampleRate, refFileSpectr := getFileSpectrogram(ctx, inFileName, frameShift, frameSamples)
+			func() (err error) {
+				defer func() {
+					if r := recover(); r != nil {
+						err = fmt.Errorf("panic processing %s: %v", inFileName, r)
+					}
+				}()
+				fileSampleRate, refFileSpectr := getFileSpectrogram(inFileName, frameShift, frameSamples)
 
 				sh := spectrToSongHashes(fileSampleRate, frameShift, idx, refFileSpectr)
 
@@ -269,13 +291,19 @@ func processSongs(ctx context.Context, musicDb string, songDocChan <-chan types.
 			binKey := make([]byte, 8)
 			binary.LittleEndian.PutUint64(binKey, k)
 			binKey = append(prefix, binKey...)
-			binVal := arrSongLocatorsToBytes(v)
-			err = txn.Set(binKey, binVal)
+			binVal, err := arrSongLocatorsToBytes(v)
+			if err != nil {
+				return err
+			}
+			if err := txn.Set(binKey, binVal); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
 	if err != nil {
-		log.Fatalf("ERR: %v", err)
+		slog.Error("failed to store hashes in database", "error", err)
+		return
 	}
 
 	err = db.Update(func(txn *badger.Txn) error {
@@ -284,57 +312,76 @@ func processSongs(ctx context.Context, musicDb string, songDocChan <-chan types.
 			binKey := make([]byte, 8)
 			binary.LittleEndian.PutUint64(binKey, uint64(idx))
 			binKey = append(prefix, binKey...)
-			err = txn.Set(binKey, []byte(song))
+			if err := txn.Set(binKey, []byte(song)); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
 	if err != nil {
-		log.Fatalf("ERR: %v", err)
+		slog.Error("failed to store songs in database", "error", err)
+		return
 	}
 
 	fmt.Printf("db created in %v\n", time.Since(t0))
 }
 
-func arrSongLocatorsFromBytes(data []byte) []SongHashLocator {
+func arrSongLocatorsFromBytes(data []byte) ([]SongHashLocator, error) {
 
 	buf := bytes.NewBuffer(data)
 
 	var n uint32
-	binary.Read(buf, binary.LittleEndian, &n)
+	if err := binary.Read(buf, binary.LittleEndian, &n); err != nil {
+		return nil, fmt.Errorf("reading count: %w", err)
+	}
 
-	lst := make([]SongHashLocator, 0)
+	lst := make([]SongHashLocator, 0, n)
 
 	for i := uint32(0); i < n; i++ {
 		var sh SongHashLocator
-		binary.Read(buf, binary.LittleEndian, &sh.Ts)
-		binary.Read(buf, binary.LittleEndian, &sh.SongIdx)
-		binary.Read(buf, binary.LittleEndian, &sh.Hash)
+		if err := binary.Read(buf, binary.LittleEndian, &sh.Ts); err != nil {
+			return nil, fmt.Errorf("reading Ts: %w", err)
+		}
+		if err := binary.Read(buf, binary.LittleEndian, &sh.SongIdx); err != nil {
+			return nil, fmt.Errorf("reading SongIdx: %w", err)
+		}
+		if err := binary.Read(buf, binary.LittleEndian, &sh.Hash); err != nil {
+			return nil, fmt.Errorf("reading Hash: %w", err)
+		}
 
 		lst = append(lst, sh)
 	}
 
-	return lst
+	return lst, nil
 }
 
-func arrSongLocatorsToBytes(lst []SongHashLocator) []byte {
+func arrSongLocatorsToBytes(lst []SongHashLocator) ([]byte, error) {
 	n := uint32(len(lst))
 
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.LittleEndian, n)
+	if err := binary.Write(buf, binary.LittleEndian, n); err != nil {
+		return nil, fmt.Errorf("writing count: %w", err)
+	}
 	for _, sh := range lst {
-		binary.Write(buf, binary.LittleEndian, sh.Ts)
-		binary.Write(buf, binary.LittleEndian, sh.SongIdx)
-		binary.Write(buf, binary.LittleEndian, sh.Hash)
+		if err := binary.Write(buf, binary.LittleEndian, sh.Ts); err != nil {
+			return nil, fmt.Errorf("writing Ts: %w", err)
+		}
+		if err := binary.Write(buf, binary.LittleEndian, sh.SongIdx); err != nil {
+			return nil, fmt.Errorf("writing SongIdx: %w", err)
+		}
+		if err := binary.Write(buf, binary.LittleEndian, sh.Hash); err != nil {
+			return nil, fmt.Errorf("writing Hash: %w", err)
+		}
 	}
 
-	return buf.Bytes()
+	return buf.Bytes(), nil
 }
 
-func getFileSpectrogram(ctx context.Context,
+func getFileSpectrogram(
 	fileName string, frameShift int, frameSamples int) (int, [][]float64) {
-	audioData, err := audiosource.AudioSamplesFromFile(ctx, fileName)
+	audioData, err := audiosource.AudioSamplesFromFile(fileName)
 	if err != nil {
-		fmt.Printf("ERR: %v\n", err)
+		slog.Error("failed to read audio samples", "file", fileName, "error", err)
 		return 0, nil
 	}
 
