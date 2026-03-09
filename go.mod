@@ -1,11 +1,11 @@
 module github.com/drgolem/musiclab
 
-go 1.25.2
+go 1.26
 
 require (
 	github.com/MicahParks/peakdetect v0.1.2
 	github.com/dgraph-io/badger/v4 v4.9.1
-	github.com/drgolem/audiokit v0.0.0-20260307091353-cc150cb83e38
+	github.com/drgolem/audiokit v0.0.0-20260309054244-8e6b8b01844b
 	github.com/drgolem/go-cuesheet v0.0.0-20260224014618-2743afdc66a5
 	github.com/drgolem/musictags v0.0.0-20260307095917-34303bfcc15e
 	github.com/fale/sit v0.0.0-20210120172342-025ffdac3d0c
@@ -15,7 +15,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	github.com/youpy/go-wav v0.3.2
-	golang.org/x/sync v0.19.0
+	golang.org/x/sync v0.20.0
 	gonum.org/v1/gonum v0.17.0
 	gonum.org/v1/plot v0.16.0
 )
@@ -31,9 +31,9 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgraph-io/ristretto/v2 v2.2.0 // indirect
-	github.com/drgolem/go-flac v0.0.0-20260227233836-5288cd6451bf // indirect
+	github.com/drgolem/go-flac v0.0.0-20260309053727-b159fefb5931 // indirect
 	github.com/drgolem/go-ogg v0.0.0-20221021062348-a1b6f0a17f55 // indirect
-	github.com/drgolem/go-opus v0.0.0-20221022213453-763cb73ec5b5 // indirect
+	github.com/drgolem/go-opus v0.0.0-20260309031855-220c97a6ac4a // indirect
 	github.com/drgolem/ringbuffer v0.0.0-20260212040143-40ad42d6ca09 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
